@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+*.egg-info/
+.Python
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+*.log
+
+# Node / React
+node_modules/
+npm-debug.log*
+yarn-error.log*
+dist/
+build/
+.next/
+
+# Environment variables (IMPORTANT — never commit secrets/API keys)
+.env
+.env.local
+.env.*.local
+*.env
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML (if you'll have model files/datasets in this repo too)
+*.pkl
+*.h5
+*.csv
+!sample_data.csv
