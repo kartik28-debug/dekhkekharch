@@ -9,6 +9,9 @@ from .views import (
     SavingsAllocationView,
     GoalListCreateView,
     GoalDetailView,
+    BufferReserveView,
+    BufferReserveDepositView,
+    BufferReserveWithdrawView,
 )
 
 dashboard_urlpatterns = [
@@ -35,6 +38,17 @@ goals_urlpatterns = [
     # PUT  /api/goals/<pk>/  → update a goal
     # DELETE /api/goals/<pk>/ → delete a goal
     path("<int:pk>/", GoalDetailView.as_view(), name="goals-detail"),
+]
+
+buffer_reserve_urlpatterns = [
+    # GET  /api/buffer-reserve/           → balance + paginated transaction log
+    path("", BufferReserveView.as_view(), name="buffer-reserve"),
+
+    # POST /api/buffer-reserve/deposit/   → DSL surplus → Buffer Reserve
+    path("deposit/", BufferReserveDepositView.as_view(), name="buffer-reserve-deposit"),
+
+    # POST /api/buffer-reserve/withdraw/  → cover DSL deficit or manual expense
+    path("withdraw/", BufferReserveWithdrawView.as_view(), name="buffer-reserve-withdraw"),
 ]
 
 # Keep a top-level urlpatterns alias so Django's include() still works

@@ -72,5 +72,5 @@ class User(AbstractUser):
             "major": self.last_custom_ratio_major,
             "dsl": self.last_custom_ratio_dsl,
             "savings": self.last_custom_ratio_savings,
-            "emergency": self.last_custom_ratio_emergency,
+            "buffer_reserve": self.last_custom_ratio_emergency,
         }

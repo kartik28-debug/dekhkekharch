@@ -26,7 +26,7 @@ SOURCE_SALARY = "salary"
 SOURCE_EXTERNAL = "external"
 
 # Bucket types that exist in BucketBalance
-VALID_BUCKET_TYPES = {"major", "dsl", "savings", "emergency"}
+VALID_BUCKET_TYPES = {"major", "dsl", "savings", "buffer_reserve"}
 
 # ---------------------------------------------------------------------------
 # DSL over-spend floor rule (requirement §4):
@@ -36,7 +36,7 @@ VALID_BUCKET_TYPES = {"major", "dsl", "savings", "emergency"}
 #   negative internally while the view layer floors the display at ₹0.
 #
 #   Buckets that are NEVER allowed to go negative (hard floor = 0):
-HARD_FLOOR_BUCKETS = {"emergency", "savings", "major"}
+HARD_FLOOR_BUCKETS = {"buffer_reserve", "savings", "major"}
 #
 #   Buckets with a soft floor (can go negative internally; floored to 0 in UI):
 SOFT_FLOOR_BUCKETS = {"dsl"}

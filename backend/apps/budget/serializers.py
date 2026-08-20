@@ -98,7 +98,7 @@ class SalarySubmitSerializer(serializers.Serializer):
             "major": data["ratio_major"],
             "dsl": data["ratio_dsl"],
             "savings": data["ratio_savings"],
-            "emergency": data["ratio_emergency"],
+            "buffer_reserve": data["ratio_emergency"],
         }
 
 
@@ -194,3 +194,88 @@ class GoalSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
 
+
+# ---------------------------------------------------------------------------
+# Buffer Reserve — GET /api/buffer-reserve/
+# ---------------------------------------------------------------------------
+
+class BufferReserveTransactionSerializer(serializers.Serializer):
+    """One transaction log entry for the Buffer Reserve history list."""
+    id                 = serializers.IntegerField(read_only=True)
+    source_bucket      = serializers.CharField()
+    destination_bucket = serializers.CharField()
+    amount             = serializers.DecimalField(max_digits=12, decimal_places=2)
+    reason             = serializers.CharField()
+    timestamp          = serializers.DateTimeField()
+
+
+class BufferReserveStatusSerializer(serializers.Serializer):
+    """
+    Full response shape for GET /api/buffer-reserve/.
+
+    balance     — current BucketBalance for the buffer_reserve bucket.
+    transactions — paginated list of BufferReserveTransactionSerializer.
+    page        — current page number.
+    total_pages — total number of pages available.
+    """
+    balance      = serializers.DecimalField(max_digits=12, decimal_places=2)
+    transactions = BufferReserveTransactionSerializer(many=True)
+    page         = serializers.IntegerField()
+    total_pages  = serializers.IntegerField()
+
+
+# ---------------------------------------------------------------------------
+# Buffer Reserve — POST /api/buffer-reserve/deposit/
+# ---------------------------------------------------------------------------
+
+class BufferReserveDepositSerializer(serializers.Serializer):
+    """
+    Validates a deposit into the Buffer Reserve bucket.
+
+    Fields:
+      amount — positive INR amount to move from DSL → buffer_reserve.
+      source — must be 'dsl_bucket' (only valid source for hackathon scope).
+    """
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        error_messages={"min_value": "Deposit amount must be greater than ₹0."},
+    )
+    source = serializers.ChoiceField(
+        choices=["dsl_bucket"],
+        default="dsl_bucket",
+        help_text="Source bucket for the deposit. Only 'dsl_bucket' is supported.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Buffer Reserve — POST /api/buffer-reserve/withdraw/
+# ---------------------------------------------------------------------------
+
+class BufferReserveWithdrawSerializer(serializers.Serializer):
+    """
+    Validates a withdrawal from the Buffer Reserve bucket.
+
+    Fields:
+      amount — positive INR amount to withdraw.
+      reason — free-text description (required for audit log).
+      type   — 'dsl_deficit': move money to DSL bucket to cover overspend.
+               'manual_expense': money leaves the ecosystem entirely.
+    """
+    WITHDRAW_TYPES = ["dsl_deficit", "manual_expense"]
+
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        error_messages={"min_value": "Withdrawal amount must be greater than ₹0."},
+    )
+    reason = serializers.CharField(
+        max_length=500,
+        error_messages={"blank": "A reason is required for the audit log."},
+    )
+    type = serializers.ChoiceField(
+        choices=WITHDRAW_TYPES,
+        error_messages={"invalid_choice": "type must be 'dsl_deficit' or 'manual_expense'."},
+    )

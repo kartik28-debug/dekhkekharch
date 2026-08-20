@@ -113,7 +113,7 @@ class BucketBalance(models.Model):
         ("major", "Major Expenses"),
         ("dsl", "Dynamic Spend Limit"),
         ("savings", "Savings"),
-        ("emergency", "Emergency Fund"),
+        ("buffer_reserve", "Buffer Reserve"),
     ]
 
     user = models.ForeignKey(
@@ -121,7 +121,7 @@ class BucketBalance(models.Model):
         on_delete=models.CASCADE,
         related_name="bucket_balances",
     )
-    bucket_type = models.CharField(max_length=10, choices=BUCKET_CHOICES)
+    bucket_type = models.CharField(max_length=16, choices=BUCKET_CHOICES)
     current_balance = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -171,8 +171,8 @@ class BucketTransaction(models.Model):
     )
     # Source — either a real bucket_type or a sentinel ('salary', 'external')
     source_bucket = models.CharField(max_length=20)
-    # Destination — always a real bucket_type
-    destination_bucket = models.CharField(max_length=10)
+    # Destination — a real bucket_type or a sentinel ('external')
+    destination_bucket = models.CharField(max_length=20)
     amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,

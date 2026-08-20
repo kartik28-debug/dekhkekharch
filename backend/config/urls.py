@@ -3,7 +3,12 @@
 from django.contrib import admin
 from django.urls import include, path
 
-from apps.budget.urls import dashboard_urlpatterns, savings_urlpatterns, goals_urlpatterns
+from apps.budget.urls import (
+    dashboard_urlpatterns,
+    savings_urlpatterns,
+    goals_urlpatterns,
+    buffer_reserve_urlpatterns,
+)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -16,6 +21,9 @@ urlpatterns = [
 
     # Goals CRUD endpoints
     path("api/goals/", include(goals_urlpatterns)),
+
+    # Buffer Reserve endpoints (renamed from Emergency Fund)
+    path("api/buffer-reserve/", include(buffer_reserve_urlpatterns)),
 
     # JWT auth endpoints (token obtain + refresh)
     path("api/auth/", include("apps.accounts.urls")),

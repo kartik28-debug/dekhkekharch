@@ -24,13 +24,13 @@ MODE_RATIOS: dict[str, dict[str, Decimal]] = {
         "major": Decimal("50"),
         "dsl": Decimal("15"),
         "savings": Decimal("25"),
-        "emergency": Decimal("10"),
+        "buffer_reserve": Decimal("10"),
     },
     "balanced": {
         "major": Decimal("50"),
         "dsl": Decimal("25"),
         "savings": Decimal("15"),
-        "emergency": Decimal("10"),
+        "buffer_reserve": Decimal("10"),
     },
 }
 
@@ -107,7 +107,7 @@ def _validate_custom_ratios(ratios: dict[str, Decimal]) -> None:
     - All values must be >= 0.
     - They must sum to exactly 100.
     """
-    required_keys = {"major", "dsl", "savings", "emergency"}
+    required_keys = {"major", "dsl", "savings", "buffer_reserve"}
     if set(ratios.keys()) != required_keys:
         raise ValueError(
             f"Custom ratios must contain keys {required_keys}, got {set(ratios.keys())}."
@@ -285,7 +285,7 @@ def _upsert_allocation(
             "ratio_major": stored_ratios["major"],
             "ratio_dsl": stored_ratios["dsl"],
             "ratio_savings": stored_ratios["savings"],
-            "ratio_emergency": stored_ratios["emergency"],
+            "ratio_emergency": stored_ratios["buffer_reserve"],
             "is_locked": lock,
         },
     )
@@ -300,7 +300,7 @@ def _save_last_custom_ratios(user, ratios: dict[str, Decimal]) -> None:
     user.last_custom_ratio_major = ratios["major"]
     user.last_custom_ratio_dsl = ratios["dsl"]
     user.last_custom_ratio_savings = ratios["savings"]
-    user.last_custom_ratio_emergency = ratios["emergency"]
+    user.last_custom_ratio_emergency = ratios["buffer_reserve"]
     user.save(
         update_fields=[
             "last_custom_ratio_major",

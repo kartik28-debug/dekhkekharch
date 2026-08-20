@@ -14,6 +14,7 @@ Endpoints:
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -21,12 +22,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.services.allocation import apply_allocation, lock_allocation
-from .models import BucketBalance, MonthlyAllocation, SavingsGoalAllocation, Goal
+from core.utils.atomic_ops import (
+    transfer_between_buckets,
+    InsufficientFundsError,
+    SOURCE_EXTERNAL,
+)
+from .models import BucketBalance, BucketTransaction, MonthlyAllocation, SavingsGoalAllocation, Goal
 from .serializers import (
     DashboardSerializer,
     SalarySubmitSerializer,
     SavingsAllocationSerializer,
     GoalSerializer,
+    BufferReserveStatusSerializer,
+    BufferReserveDepositSerializer,
+    BufferReserveWithdrawSerializer,
 )
 
 
@@ -69,15 +78,19 @@ def _build_dashboard_data(user, allocation, bucket_balances, applied_to=None):
     CENT = Decimal("0.01")
 
     buckets = {}
-    for bucket_type in ("major", "dsl", "savings", "emergency"):
+    for bucket_type in ("major", "dsl", "savings", "buffer_reserve"):
         bb = bucket_balances.get(bucket_type)
         raw_balance = bb.current_balance if bb else ZERO
         # DSL floor: never show a negative number for DSL
         displayed_balance = max(raw_balance, ZERO) if bucket_type == "dsl" else raw_balance
 
-        # Allocated amount — computed from the stored ratio on the allocation row
+        # Allocated amount — computed from the stored ratio on the allocation row.
+        # NOTE: The DB column is still named ratio_emergency (legacy); buffer_reserve
+        #       maps to it since only the bucket_type string was renamed, not the column.
         if allocation:
-            ratio = getattr(allocation, f"ratio_{bucket_type}")
+            col = "ratio_emergency" if bucket_type == "buffer_reserve" else f"ratio_{bucket_type}"
+            ratio = getattr(allocation, col)
+
             allocated = (allocation.salary * ratio / 100).quantize(CENT)
         else:
             allocated = ZERO
@@ -434,3 +447,295 @@ class GoalDetailView(APIView):
         goal.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+# ---------------------------------------------------------------------------
+# GET /api/buffer-reserve/
+# ---------------------------------------------------------------------------
+
+class BufferReserveView(APIView):
+    """
+    Returns the current buffer_reserve BucketBalance and a paginated list
+    of all BucketTransactions where source_bucket OR destination_bucket
+    is 'buffer_reserve'.
+
+    Query params:
+      ?page=<int>  — page number (1-indexed, default 1)
+      ?page_size=<int>  — items per page (default 20, max 100)
+    """
+
+    permission_classes = [AllowAny]
+    DEFAULT_PAGE_SIZE = 20
+    MAX_PAGE_SIZE     = 100
+
+    def get(self, request):
+        import math
+        user = _get_demo_user()
+        if user is None:
+            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        allocation, balances = _get_current_allocation_and_balances(user)
+        br_bb = balances.get("buffer_reserve")
+        current_balance = br_bb.current_balance if br_bb else Decimal("0")
+
+        # --- Paginate transaction history ---
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+        except (ValueError, TypeError):
+            page = 1
+
+        try:
+            page_size = min(
+                self.MAX_PAGE_SIZE,
+                max(1, int(request.query_params.get("page_size", self.DEFAULT_PAGE_SIZE)))
+            )
+        except (ValueError, TypeError):
+            page_size = self.DEFAULT_PAGE_SIZE
+
+        qs = (
+            BucketTransaction.objects
+            .filter(
+                user=user,
+            )
+            .filter(
+                Q(source_bucket="buffer_reserve") |
+                Q(destination_bucket="buffer_reserve")
+            )
+            .order_by("-timestamp")
+        )
+
+        total_count = qs.count()
+        total_pages = max(1, math.ceil(total_count / page_size))
+        offset      = (page - 1) * page_size
+        transactions = qs[offset: offset + page_size]
+
+        tx_data = [
+            {
+                "id":                 t.id,
+                "source_bucket":      t.source_bucket,
+                "destination_bucket": t.destination_bucket,
+                "amount":             t.amount,
+                "reason":             t.reason,
+                "timestamp":          t.timestamp,
+            }
+            for t in transactions
+        ]
+
+        data = {
+            "balance":      current_balance,
+            "transactions": tx_data,
+            "page":         page,
+            "total_pages":  total_pages,
+        }
+        serializer = BufferReserveStatusSerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/buffer-reserve/deposit/
+# ---------------------------------------------------------------------------
+
+class BufferReserveDepositView(APIView):
+    """
+    Deposit money into Buffer Reserve from the DSL bucket.
+
+    Payload: { "amount": <number>, "source": "dsl_bucket" }
+
+    Uses transfer_between_buckets() atomically:
+      DSL → buffer_reserve
+
+    Returns the updated buffer_reserve balance.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user = _get_demo_user()
+        if user is None:
+            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        serializer = BufferReserveDepositSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        amount = serializer.validated_data["amount"]
+
+        # Verify source DSL bucket has enough balance
+        allocation, balances = _get_current_allocation_and_balances(user)
+        if allocation is None:
+            return Response(
+                {"detail": "No active allocation for this month. Please set a salary first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        dsl_bb = balances.get("dsl")
+        dsl_balance = dsl_bb.current_balance if dsl_bb else Decimal("0")
+        # DSL can be negative; the displayed floor is ₹0, but we check the actual balance
+        if dsl_balance < amount:
+            return Response(
+                {
+                    "detail": (
+                        f"DSL balance (₹{max(dsl_balance, Decimal('0'))}) is insufficient "
+                        f"for a deposit of ₹{amount}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            _, br_bb = transfer_between_buckets(
+                user=user,
+                from_bucket_type="dsl",
+                to_bucket_type="buffer_reserve",
+                amount=amount,
+                reason=f"Manual DSL surplus deposit to Buffer Reserve: ₹{amount}",
+                allocation=allocation,
+            )
+        except InsufficientFundsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "detail": "Deposit successful.",
+                "buffer_reserve_balance": str(br_bb.current_balance),
+                "amount_deposited": str(amount),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/buffer-reserve/withdraw/
+# ---------------------------------------------------------------------------
+
+class BufferReserveWithdrawView(APIView):
+    """
+    Withdraw money from Buffer Reserve.
+
+    Payload: {
+      "amount": <number>,
+      "reason": <string>,
+      "type": "dsl_deficit" | "manual_expense"
+    }
+
+    Type logic:
+      "dsl_deficit"    → transfer_between_buckets(buffer_reserve → dsl).
+                         If amount > available balance, transfer the maximum
+                         available (drain to ₹0) and return HTTP 206 with
+                         partially_covered=True so the frontend knows.
+
+      "manual_expense" → Deduct directly from buffer_reserve (money leaves
+                         the ecosystem). Write a BucketTransaction with
+                         destination_bucket='external'.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.db import transaction as db_transaction
+
+        user = _get_demo_user()
+        if user is None:
+            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        serializer = BufferReserveWithdrawSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        amount          = serializer.validated_data["amount"]
+        reason          = serializer.validated_data["reason"]
+        withdraw_type   = serializer.validated_data["type"]
+
+        allocation, balances = _get_current_allocation_and_balances(user)
+        if allocation is None:
+            return Response(
+                {"detail": "No active allocation for this month. Please set a salary first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        br_bb = balances.get("buffer_reserve")
+        available = br_bb.current_balance if br_bb else Decimal("0")
+
+        # Hard check: Buffer Reserve must have funds to withdraw from
+        if available <= Decimal("0"):
+            return Response(
+                {"detail": "Buffer Reserve is empty. Nothing to withdraw."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if withdraw_type == "dsl_deficit":
+            # --- Partial coverage logic ---
+            actual_transfer = min(amount, available)  # drain to ₹0 at most
+            partially_covered = actual_transfer < amount
+
+            try:
+                _, dsl_bb = transfer_between_buckets(
+                    user=user,
+                    from_bucket_type="buffer_reserve",
+                    to_bucket_type="dsl",
+                    amount=actual_transfer,
+                    reason=reason or f"Buffer Reserve covering DSL deficit of ₹{amount}",
+                    allocation=allocation,
+                )
+            except (InsufficientFundsError, ValueError) as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Refresh br_bb after transfer
+            br_bb.refresh_from_db()
+
+            response_data = {
+                "detail": "DSL deficit covered." if not partially_covered else
+                          "Buffer Reserve drained. DSL deficit only partially covered.",
+                "amount_requested":       str(amount),
+                "amount_transferred":     str(actual_transfer),
+                "partially_covered":      partially_covered,
+                "buffer_reserve_balance": str(br_bb.current_balance),
+                "dsl_balance":            str(dsl_bb.current_balance),
+            }
+            response_status = (
+                status.HTTP_206_PARTIAL_CONTENT if partially_covered
+                else status.HTTP_200_OK
+            )
+            return Response(response_data, response_status)
+
+        else:  # manual_expense — money leaves the ecosystem
+            if amount > available:
+                return Response(
+                    {
+                        "detail": (
+                            f"Insufficient Buffer Reserve balance. "
+                            f"Available: ₹{available}, requested: ₹{amount}."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with db_transaction.atomic():
+                # Direct deduction — no destination bucket (money leaves)
+                br_bb_locked = (
+                    BucketBalance.objects
+                    .select_for_update()
+                    .get(user=user, bucket_type="buffer_reserve", allocation=allocation)
+                )
+                br_bb_locked.current_balance -= amount
+                br_bb_locked.save(update_fields=["current_balance"])
+
+                # Audit log: destination is the sentinel 'external'
+                BucketTransaction.objects.create(
+                    user=user,
+                    source_bucket="buffer_reserve",
+                    destination_bucket="external",
+                    amount=amount,
+                    reason=reason,
+                    allocation=allocation,
+                )
+
+            return Response(
+                {
+                    "detail": "Manual expense deducted from Buffer Reserve.",
+                    "amount_withdrawn":       str(amount),
+                    "buffer_reserve_balance": str(br_bb_locked.current_balance),
+                },
+                status=status.HTTP_200_OK,
+            )
