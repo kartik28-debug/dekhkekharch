@@ -6,15 +6,15 @@ import { getDashboard, postSalary, lockMonth } from '../api/dashboard';
 
 const NAV_CARDS = [
   { id: 'smart-budgeting', icon: '📊', label: 'Smart Budgeting', sub: 'DSL · Weekly limits', path: '/smart-budgeting' },
-  { id: 'major-expenses',  icon: '🏠', label: 'Major Expenses',  sub: 'EMI, Rent, Bills',   path: '/major-expenses' },
-  { id: 'emergency',       icon: '🛡️', label: 'Emergency Fund',  sub: 'Safety net',          path: '/emergency' },
-  { id: 'savings',         icon: '💎', label: 'Savings',         sub: 'Goals · Stocks',      path: '/savings' },
+  { id: 'major-expenses', icon: '🏠', label: 'Major Expenses', sub: 'EMI, Rent, Bills', path: '/major-expenses' },
+  { id: 'emergency', icon: '🛡️', label: 'Emergency Fund', sub: 'Safety net', path: '/emergency' },
+  { id: 'savings', icon: '💎', label: 'Savings', sub: 'Goals · Stocks', path: '/savings' },
 ];
 
 const MODES = [
-  { key: 'focused',  label: 'Focused',  emoji: '🎯' },
+  { key: 'focused', label: 'Focused', emoji: '🎯' },
   { key: 'balanced', label: 'Balanced', emoji: '⚖️' },
-  { key: 'custom',   label: 'Custom',   emoji: '🛠' },
+  { key: 'custom', label: 'Custom', emoji: '🛠' },
 ];
 
 const PRESET_RATIOS = {
@@ -47,14 +47,14 @@ export default function DashboardPage() {
   const navigate = useNavigate();
 
   // ── API state ──────────────────────────────────────────────────────────
-  const [dashData, setDashData]   = useState(null);  // raw API response
-  const [loading, setLoading]     = useState(true);
-  const [apiError, setApiError]   = useState(null);
+  const [dashData, setDashData] = useState(null);  // raw API response
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState(null);
 
   // ── Local form state ───────────────────────────────────────────────────
   const [salaryInput, setSalaryInput] = useState('');
-  const [mode, setMode]               = useState('focused');
-  const [submitting, setSubmitting]   = useState(false);
+  const [mode, setMode] = useState('focused');
+  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [appliedNote, setAppliedNote] = useState(null); // "applied to next month" banner
 
@@ -79,9 +79,9 @@ export default function DashboardPage() {
       if (data.last_custom_ratios) {
         const r = data.last_custom_ratios;
         setCustomRatios({
-          major:     parseFloat(r.major).toFixed(2),
-          dsl:       parseFloat(r.dsl).toFixed(2),
-          savings:   parseFloat(r.savings).toFixed(2),
+          major: parseFloat(r.major).toFixed(2),
+          dsl: parseFloat(r.dsl).toFixed(2),
+          savings: parseFloat(r.savings).toFixed(2),
           emergency: parseFloat(r.emergency).toFixed(2),
         });
       }
@@ -115,9 +115,9 @@ export default function DashboardPage() {
         setSubmitError(`Custom ratios must sum to 100%. Currently: ${sum.toFixed(2)}%.`);
         return;
       }
-      payload.ratio_major     = parseFloat(r.major);
-      payload.ratio_dsl       = parseFloat(r.dsl);
-      payload.ratio_savings   = parseFloat(r.savings);
+      payload.ratio_major = parseFloat(r.major);
+      payload.ratio_dsl = parseFloat(r.dsl);
+      payload.ratio_savings = parseFloat(r.savings);
       payload.ratio_emergency = parseFloat(r.emergency);
     }
 
@@ -146,19 +146,19 @@ export default function DashboardPage() {
   }
 
   // ── Derived display values ─────────────────────────────────────────────
-  const buckets   = dashData?.buckets  ?? {};
-  const isLocked  = dashData?.is_locked ?? false;
+  const buckets = dashData?.buckets ?? {};
+  const isLocked = dashData?.is_locked ?? false;
   const hasSalary = dashData?.has_allocation ?? false;
 
-  const dslBalance  = buckets.dsl?.balance;
-  const dslAlloc    = buckets.dsl?.allocated;
-  const savBalance  = buckets.savings?.balance;
-  const emergBal    = buckets.emergency?.balance;
-  const majorBal    = buckets.major?.balance;
+  const dslBalance = buckets.dsl?.balance;
+  const dslAlloc = buckets.dsl?.allocated;
+  const savBalance = buckets.savings?.balance;
+  const emergBal = buckets.buffer_reserve?.balance || 0;
+  const majorBal = buckets.major?.balance;
 
   // "Allocatable" = everything except Major Expenses bucket
   const allocatable = hasSalary
-    ? parseFloat(dslBalance||0) + parseFloat(savBalance||0) + parseFloat(emergBal||0)
+    ? parseFloat(dslBalance || 0) + parseFloat(savBalance || 0) + parseFloat(emergBal || 0)
     : 0;
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -254,9 +254,9 @@ export default function DashboardPage() {
           {mode === 'custom' && !isLocked && (
             <div className="ratio-grid mb-16">
               {[
-                { key: 'major',     label: 'Major %' },
-                { key: 'dsl',       label: 'DSL %' },
-                { key: 'savings',   label: 'Savings %' },
+                { key: 'major', label: 'Major %' },
+                { key: 'dsl', label: 'DSL %' },
+                { key: 'savings', label: 'Savings %' },
                 { key: 'emergency', label: 'Emergency %' },
               ].map(({ key, label }) => (
                 <div key={key}>
@@ -281,9 +281,9 @@ export default function DashboardPage() {
           {mode !== 'custom' && (
             <div className="ratio-grid mb-16">
               {[
-                { key: 'major',     label: 'Major %' },
-                { key: 'dsl',       label: 'DSL %' },
-                { key: 'savings',   label: 'Savings %' },
+                { key: 'major', label: 'Major %' },
+                { key: 'dsl', label: 'DSL %' },
+                { key: 'savings', label: 'Savings %' },
                 { key: 'emergency', label: 'Emergency %' },
               ].map(({ key, label }) => (
                 <div key={key}>
@@ -369,14 +369,14 @@ export default function DashboardPage() {
         <p className="section-label">Bucket Breakdown</p>
         <div className="bucket-grid">
           {[
-            { key: 'major',     label: 'Major Expenses', color: 'var(--accent)',   icon: '🏠' },
-            { key: 'dsl',       label: 'DSL',            color: 'var(--accent-3)', icon: '📊' },
-            { key: 'savings',   label: 'Savings',         color: 'var(--success)',  icon: '💎' },
-            { key: 'emergency', label: 'Emergency',       color: 'var(--danger)',   icon: '🛡️' },
+            { key: 'major', label: 'Major Expenses', color: 'var(--accent)', icon: '🏠' },
+            { key: 'dsl', label: 'DSL', color: 'var(--accent-3)', icon: '📊' },
+            { key: 'savings', label: 'Savings', color: 'var(--success)', icon: '💎' },
+            { key: 'buffer_reserve', label: 'Emergency', color: 'var(--danger)', icon: '🛡️' },
           ].map(({ key, label, color, icon }) => {
-            const bal   = buckets[key]?.balance;
+            const bal = buckets[key]?.balance;
             const alloc = buckets[key]?.allocated;
-            const pct   = alloc && parseFloat(alloc) > 0
+            const pct = alloc && parseFloat(alloc) > 0
               ? Math.min(100, (parseFloat(bal) / parseFloat(alloc)) * 100)
               : 0;
             return (
