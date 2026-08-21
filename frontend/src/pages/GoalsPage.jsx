@@ -72,18 +72,18 @@ function FieldError({ msg }) {
 
 /* ─────────────────────────────────────────────────────────── */
 export default function GoalsPage() {
-  const location   = useLocation();
+  const location = useLocation();
   const goalAmount = parseFloat(location.state?.goalAmount ?? 0);
 
   /* ── remote state ── */
-  const [goals, setGoals]       = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const [goals, setGoals] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
 
   /* ── new goal name input ── */
-  const [newName, setNewName]   = useState('');
+  const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState(null); // inline name validation error
-  const [adding, setAdding]     = useState(false);
+  const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
 
   /* ── allocation mode ── */
@@ -293,7 +293,7 @@ export default function GoalsPage() {
 
       // Allocate: never exceed remaining budget
       const alloc = Math.min(remaining, target);
-      remaining    = Math.max(remaining - alloc, 0);
+      remaining = Math.max(remaining - alloc, 0);
       return { ...g, alloc };
     });
   };

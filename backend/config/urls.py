@@ -8,6 +8,7 @@ from apps.budget.urls import (
     savings_urlpatterns,
     goals_urlpatterns,
     buffer_reserve_urlpatterns,
+    smart_budget_urlpatterns,
 )
 
 urlpatterns = [
@@ -24,6 +25,9 @@ urlpatterns = [
 
     # Buffer Reserve endpoints (renamed from Emergency Fund)
     path("api/buffer-reserve/", include(buffer_reserve_urlpatterns)),
+
+    # Smart Budget endpoints
+    path("api/smart-budget/", include(smart_budget_urlpatterns)),
 
     # JWT auth endpoints (token obtain + refresh)
     path("api/auth/", include("apps.accounts.urls")),

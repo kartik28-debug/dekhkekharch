@@ -309,3 +309,153 @@ class BufferReserveWithdrawSerializer(serializers.Serializer):
         choices=WITHDRAW_TYPES,
         error_messages={"invalid_choice": "type must be 'dsl_deficit' or 'manual_expense'."},
     )
+
+
+# ---------------------------------------------------------------------------
+# Smart Budget (Weekly Checkpoint) - Daily Expense Log
+# ---------------------------------------------------------------------------
+
+class DailyExpenseLogSerializer(serializers.Serializer):
+    """
+    Read/write serializer for DailyExpenseLog.
+
+    Write fields (POST):
+      amount          - positive decimal, max 10,000,000
+      description     - optional label (max 200 chars)
+      expense_date    - ISO date string (YYYY-MM-DD); the calendar date the
+                        expense belongs to (may be in the past for retroactive entries)
+      is_late_adjustment   - bool; set by the frontend when expense_date is in a closed week
+      late_adjustment_note - human-readable explanation for late entries
+
+    Read fields (GET, read_only):
+      id, created_at
+    """
+    id          = serializers.IntegerField(read_only=True)
+    amount      = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        max_value=Decimal("10000000"),
+        error_messages={
+            "min_value": "Expense amount must be greater than 0.",
+            "max_value": "Expense amount cannot exceed 1,00,00,000.",
+        },
+    )
+    description = serializers.CharField(max_length=200, allow_blank=True, default="")
+    expense_date = serializers.DateField(
+        help_text="Calendar date the expense belongs to (YYYY-MM-DD)."
+    )
+    is_late_adjustment   = serializers.BooleanField(default=False, required=False)
+    late_adjustment_note = serializers.CharField(
+        max_length=500, allow_blank=True, default="", required=False
+    )
+    created_at  = serializers.DateTimeField(read_only=True)
+
+
+# ---------------------------------------------------------------------------
+# Smart Budget v2 — Full Weekly Checkpoint serializers
+# ---------------------------------------------------------------------------
+
+class DailyExpenseEntrySerializer(serializers.Serializer):
+    """
+    Read/write serializer for DailyExpenseEntry.
+
+    Strict validation (Edge Case 9):
+    - amount must be a positive Decimal (0.01 .. 10,000,000)
+    - expense_date must be a valid YYYY-MM-DD, not in the future
+    - description is optional, max 200 chars
+    """
+    id          = serializers.IntegerField(read_only=True)
+    amount      = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        max_value=Decimal("10000000"),
+        error_messages={
+            "min_value": "Expense amount must be greater than Rs 0.",
+            "max_value": "Expense amount cannot exceed Rs 1,00,00,000.",
+            "invalid":   "Enter a valid number. Do not use characters like -, +, or e.",
+        },
+    )
+    description = serializers.CharField(max_length=200, allow_blank=True, default="", required=False)
+    expense_date = serializers.DateField()
+    created_at  = serializers.DateTimeField(read_only=True, required=False)
+    updated_at  = serializers.DateTimeField(read_only=True, required=False)
+
+    def validate_expense_date(self, value):
+        import datetime
+        if value > datetime.date.today():
+            raise serializers.ValidationError("Expense date cannot be in the future.")
+        return value
+
+
+class WeekStatusSerializer(serializers.Serializer):
+    """Read-only serializer for WeekStatus."""
+    id                  = serializers.IntegerField(read_only=True)
+    week_number         = serializers.IntegerField(read_only=True)
+    week_start_date     = serializers.DateField(read_only=True)
+    week_end_date       = serializers.DateField(read_only=True)
+    wsl_at_start        = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    dsl_at_start        = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    weekly_expense_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    week_delta          = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    is_settled          = serializers.BooleanField(read_only=True)
+    settled_at          = serializers.DateTimeField(read_only=True, required=False)
+
+
+class SmartBudgetStateSerializer(serializers.Serializer):
+    """
+    Full state snapshot returned by GET /api/smart-budget/state/.
+    The Dashboard reads smart_budget_expense, dsl, and wsl from here.
+    """
+    # Core pool and computed limits
+    smart_budget_expense = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    weekly_expense      = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    monthly_expense     = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    dsl                 = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    wsl                 = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    # Computed display versions (floored at 0 for UI — Edge Case 3)
+    dsl_display         = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    wsl_display         = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+    # Week / month metadata
+    week_number         = serializers.IntegerField(read_only=True)
+    week_start_date     = serializers.DateField(read_only=True)
+    month_start_date    = serializers.DateField(read_only=True)
+    remaining_days      = serializers.IntegerField(read_only=True)
+    remaining_weeks     = serializers.IntegerField(read_only=True)
+
+    # State flags
+    is_exhausted        = serializers.BooleanField(read_only=True)
+    is_month_settled    = serializers.BooleanField(read_only=True)
+    outstanding_deficit = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+    # Child records
+    week_statuses       = WeekStatusSerializer(many=True, read_only=True)
+    entries             = DailyExpenseEntrySerializer(many=True, read_only=True)
+
+    # Contextual messages for Edge Case banners
+    catch_up_summaries  = serializers.ListField(child=serializers.DictField(), read_only=True, required=False)
+    month              = serializers.IntegerField(read_only=True)
+    year               = serializers.IntegerField(read_only=True)
+
+
+class SettlementResultSerializer(serializers.Serializer):
+    """Result payload returned by settle-month and end-week actions."""
+    status              = serializers.CharField(read_only=True)
+    amount              = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    action_needed       = serializers.CharField(read_only=True)
+    partially_covered   = serializers.BooleanField(read_only=True)
+    remaining_deficit   = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+
+class AllocateSurplusSerializer(serializers.Serializer):
+    """Payload for POST /api/smart-budget/allocate-surplus/."""
+    DESTINATION_CHOICES = ["savings", "buffer_reserve"]
+    destination = serializers.ChoiceField(choices=DESTINATION_CHOICES)
+    amount      = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        error_messages={"min_value": "Amount must be greater than Rs 0."},
+    )
