@@ -1,416 +1,457 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import NavBar from '../components/NavBar';
-import Button from '../components/Button';
-import Modal from '../components/Modal';
-import ListItem from '../components/ListItem';
-import { 
-  getState, 
-  logExpense, 
-  editExpense, 
-  deleteExpense, 
-  endWeek, 
-  settleMonth, 
-  allocateSurplus 
-} from '../api/smartBudget';
-import { getBufferReserve } from '../api/bufferReserve';
-import { 
-  toISODate, 
-  isDateInSettledWeek, 
-  isWeekEnded 
-} from '../lib/weeklyCheckpoint';
+
+const INITIAL_CATEGORIES = [
+  { id: 'food', name: 'Food', icon: '🍔' },
+  { id: 'entertainment', name: 'Entertainment', icon: '🎬' },
+  { id: 'travel', name: 'Travel', icon: '🚗' },
+  { id: 'shopping', name: 'Shopping', icon: '🛍️' },
+  { id: 'bills', name: 'Bills', icon: '💡' },
+  { id: 'others', name: 'Others', icon: '📦' },
+];
 
 export default function SmartBudgetingPage() {
-  const navigate = useNavigate();
-  const [sbState, setSbState] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [efBalance, setEfBalance] = useState(0);
+  // ── Form State ──────────────────────────────────────────────────────────
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [description, setDescription] = useState('');
 
-  // Form states
-  const [form, setForm] = useState({ amount: '', description: '', date: toISODate(new Date()) });
-  const [editingId, setEditingId] = useState(null);
-  const [logging, setLogging] = useState(false);
+  // ── Category System State ───────────────────────────────────────────────
+  const [categories, setCategories] = useState(INITIAL_CATEGORIES);
+  const [selectedCategory, setSelectedCategory] = useState('Food');
+  const [isAddingCustom, setIsAddingCustom] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customEmoji, setCustomEmoji] = useState('✨');
 
-  // Modal / UI states
-  const [modalMode, setModalMode] = useState(null); // 'end_week', 'allocate_surplus', 'outstanding_deficit'
-  const [settlementResult, setSettlementResult] = useState(null);
-  const [surplusDest, setSurplusDest] = useState('savings');
+  // ── Feedback & Output State ─────────────────────────────────────────────
+  const [submittedPayload, setSubmittedPayload] = useState(null);
+  const [formError, setFormError] = useState(null);
 
-  // Fetch initial data
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await getState();
-      setSbState(data);
-      
-      const efStatus = await getBufferReserve();
-      setEfBalance(parseFloat(efStatus.balance) || 0);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Handle auto week-end trigger
-  useEffect(() => {
-    if (sbState && !sbState.is_month_settled && !sbState.is_exhausted) {
-      const today = toISODate(new Date());
-      if (isWeekEnded(sbState.week_start_date, today) && !modalMode) {
-        setModalMode('end_week');
-      }
-    }
-  }, [sbState, modalMode]);
-
-  const handleSubmit = async (e) => {
+  // ── Handlers ─────────────────────────────────────────────────────────────
+  const handleAddCustomCategory = (e) => {
     e.preventDefault();
-    if (!sbState) return;
+    const trimmed = customName.trim();
+    if (!trimmed) return;
 
-    try {
-      setLogging(true);
-      const payload = {
-        amount: parseFloat(form.amount),
-        description: form.description.trim(),
-        expense_date: form.date,
+    // Check if category already exists (case-insensitive)
+    const exists = categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (!exists) {
+      const newCat = {
+        id: `custom-${Date.now()}`,
+        name: trimmed,
+        icon: customEmoji || '✨',
       };
-
-      let newState;
-      if (editingId) {
-        newState = await editExpense(editingId, payload);
-      } else {
-        newState = await logExpense(payload);
-      }
-      
-      setSbState(newState);
-      setForm({ amount: '', description: '', date: toISODate(new Date()) });
-      setEditingId(null);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLogging(false);
+      setCategories((prev) => [...prev, newCat]);
+      setSelectedCategory(trimmed);
+    } else {
+      setSelectedCategory(trimmed);
     }
+
+    setCustomName('');
+    setIsAddingCustom(false);
   };
 
-  const handleEditInit = (entry) => {
-    setEditingId(entry.id);
-    setForm({
-      amount: entry.amount,
-      description: entry.description,
-      date: entry.expense_date,
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setFormError(null);
 
-  const handleDelete = async (id) => {
-    if (!confirm('Delete this expense?')) return;
-    try {
-      setLogging(true);
-      const newState = await deleteExpense(id);
-      setSbState(newState);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLogging(false);
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      setFormError('Please enter a valid amount greater than ₹0.');
+      return;
     }
-  };
 
-  const handleEndWeek = async () => {
-    if (!sbState) return;
-    try {
-      setLogging(true);
-      
-      // Edge Case 2: divide by zero guard
-      if (sbState.remaining_weeks <= 0) {
-        // Route straight to month-end
-        const result = await settleMonth();
-        setSettlementResult(result);
-        if (result.action_needed === 'ALLOCATE') {
-          setModalMode('allocate_surplus');
-        } else if (result.action_needed === 'PARTIAL_EF') {
-          setModalMode('outstanding_deficit');
-        } else {
-          setModalMode(null);
-          fetchData(); // refresh full state
-        }
-        return;
-      }
-
-      // Normal week-end
-      const newState = await endWeek();
-      setSbState(newState);
-      setModalMode(null);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLogging(false);
+    if (!selectedCategory) {
+      setFormError('Please select a category.');
+      return;
     }
+
+    // Exact payload structure required for backend integration
+    const payload = {
+      amount: parsedAmount,
+      category: selectedCategory,
+      date: date,
+      description: description.trim(),
+    };
+
+    console.log('[SmartBudgeting] Log Expense Payload:', payload);
+    setSubmittedPayload(payload);
+
+    // Reset amount & description after successful submission
+    setAmount('');
+    setDescription('');
   };
-
-  const handleAllocateSurplus = async () => {
-    if (!settlementResult) return;
-    try {
-      setLogging(true);
-      const newState = await allocateSurplus(surplusDest, settlementResult.amount);
-      setSbState(newState);
-      setModalMode(null);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLogging(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="layout">
-        <NavBar title="Smart Budgeting" />
-        <div className="page col flex-center" style={{ marginTop: 100 }}>
-          <p className="text-muted">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !sbState) {
-    return (
-      <div className="layout">
-        <NavBar title="Smart Budgeting" />
-        <div className="page col flex-center" style={{ marginTop: 100 }}>
-          <p className="text-danger text-center">
-            {error || 'No active budget found.'}<br/>
-            Set your salary on the Dashboard first.
-          </p>
-          <Button className="mt-16" onClick={() => navigate('/dashboard')}>Go to Dashboard</Button>
-        </div>
-      </div>
-    );
-  }
-
-  const dslVal = parseFloat(sbState.dsl_display);
-  const wslVal = parseFloat(sbState.wsl_display);
-  const spent = parseFloat(sbState.weekly_expense);
-  const pool = parseFloat(sbState.smart_budget_expense);
-
-  // Percentage for progress bar
-  const pct = wslVal > 0 ? Math.round((spent / wslVal) * 100) : (spent > 0 ? 100 : 0);
-  const glowClass = pct >= 90 ? 'danger' : pct >= 65 ? 'warn' : '';
 
   return (
     <div className="layout">
+      {/* ── Custom Glassmorphism & Micro-Animation Styles ── */}
       <style>{`
-        .chk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-        .chk-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; }
-        .chk-label { color: var(--muted); font-size: 0.8rem; }
-        .chk-val { font-weight: 600; font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem; margin-top: 4px; }
+        .sb-container {
+          max-width: 720px;
+          margin: 0 auto;
+          padding: 0 16px 120px;
+        }
+
+        .glass-card {
+          background: rgba(20, 20, 31, 0.75);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 20px;
+          padding: 32px 28px;
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .glass-card:hover {
+          border-color: rgba(124, 106, 246, 0.3);
+          box-shadow: 0 24px 60px rgba(124, 106, 246, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+        }
+
+        .category-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          color: #94A3B8;
+          font-size: 0.88rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          user-select: none;
+        }
+
+        .category-chip:hover {
+          background: rgba(124, 106, 246, 0.1);
+          border-color: rgba(124, 106, 246, 0.3);
+          color: #F8FAFC;
+          transform: translateY(-2px);
+        }
+
+        .category-chip.active {
+          background: linear-gradient(135deg, rgba(124, 106, 246, 0.3), rgba(168, 85, 247, 0.2));
+          border-color: #7C6AF6;
+          color: #FFFFFF;
+          box-shadow: 0 0 20px rgba(124, 106, 246, 0.35);
+          font-weight: 600;
+        }
+
+        .category-chip-add {
+          border-style: dashed;
+          background: rgba(124, 106, 246, 0.05);
+          color: var(--accent-2, #A855F7);
+        }
+
+        .category-chip-add:hover {
+          background: rgba(124, 106, 246, 0.18);
+          border-color: var(--accent-2, #A855F7);
+        }
+
+        .currency-input-wrapper {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .currency-symbol {
+          position: absolute;
+          left: 18px;
+          font-size: 1.4rem;
+          font-weight: 700;
+          color: #7C6AF6;
+          pointer-events: none;
+        }
+
+        .currency-input {
+          width: 100%;
+          padding: 16px 18px 16px 44px;
+          font-size: 1.5rem;
+          font-weight: 700;
+          font-family: 'Space Grotesk', sans-serif;
+          color: #F8FAFC;
+          background: rgba(15, 15, 23, 0.8);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 14px;
+          outline: none;
+          transition: all 0.25s ease;
+        }
+
+        .currency-input:focus {
+          border-color: #7C6AF6;
+          box-shadow: 0 0 24px rgba(124, 106, 246, 0.25);
+          background: rgba(15, 15, 23, 0.95);
+        }
+
+        .currency-input::placeholder {
+          color: #475569;
+          font-weight: 500;
+        }
+
+        .custom-cat-input-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 12px;
+          padding: 12px;
+          background: rgba(15, 15, 23, 0.6);
+          border: 1px solid rgba(124, 106, 246, 0.3);
+          border-radius: 12px;
+          animation: fadeIn 0.2s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .submit-btn {
+          width: 100%;
+          padding: 16px;
+          font-size: 1rem;
+          font-weight: 700;
+          color: #FFFFFF;
+          background: linear-gradient(135deg, #7C6AF6 0%, #9333EA 100%);
+          border: none;
+          border-radius: 14px;
+          cursor: pointer;
+          box-shadow: 0 10px 28px rgba(124, 106, 246, 0.35);
+          transition: all 0.25s ease;
+        }
+
+        .submit-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 14px 36px rgba(124, 106, 246, 0.5);
+          filter: brightness(1.08);
+        }
+
+        .submit-btn:active {
+          transform: translateY(0);
+        }
+
+        .payload-preview {
+          margin-top: 24px;
+          padding: 16px 20px;
+          background: rgba(74, 222, 128, 0.08);
+          border: 1px solid rgba(74, 222, 128, 0.25);
+          border-radius: 14px;
+          color: #4ADE80;
+          font-size: 0.85rem;
+          animation: fadeIn 0.3s ease;
+        }
+
+        .section-label-glow {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 1.2px;
+          color: #94A3B8;
+          margin-bottom: 10px;
+          display: block;
+        }
+
+        .placeholder-section {
+          padding: 20px;
+          border: 1px dashed rgba(255, 255, 255, 0.1);
+          border-radius: 14px;
+          color: #64748B;
+          text-align: center;
+          font-size: 0.82rem;
+          margin-bottom: 24px;
+        }
       `}</style>
 
       <NavBar title="Smart Budgeting" />
+
       <div className="page">
-        <h1 className="page-title" style={{ textAlign: 'center' }}>Smart Budgeting</h1>
-        
-        {/* Edge Case 6: Catch-up banner */}
-        {sbState.catch_up_summaries && sbState.catch_up_summaries.length > 0 && (
-          <div style={{ background: 'rgba(74, 222, 128, 0.1)', color: '#4ADE80', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
-            <strong>Past weeks caught up!</strong> Processed {sbState.catch_up_summaries.length} missed week(s).
+        <div className="sb-container">
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+            <h1 className="page-title" style={{ marginBottom: 8 }}>
+              Smart Budgeting
+            </h1>
+            <p className="text-muted" style={{ fontSize: '0.92rem' }}>
+              Track daily expenses with real-time recalculating spending limits
+            </p>
           </div>
-        )}
 
-        {/* Hero Card */}
-        <div className="card text-center" style={{ position: 'relative' }}>
-          <div className="flex-center col">
-            <div className={`dsl-ring ${glowClass}`}>
-              <span className="dsl-label">Daily Limit (DSL)</span>
-              <span className="dsl-amount">₹{dslVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-            </div>
-          </div>
-          
-          <p className="dsl-sub" style={{ marginTop: 8 }}>
-            Weekly Limit (WSL): ₹{wslVal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-          </p>
+          {/* ─────────────────────────────────────────────────────────────
+              FUTURE STEP: DSL Metrics & Summary Cards Wrapper
+              (Left clean for plugging in metrics, WSL progress, and rings)
+             ───────────────────────────────────────────────────────────── */}
+          {/* <div className="placeholder-section">
+            [FUTURE STEP: DSL Metrics & Summary Cards]
+          </div> */}
 
-          <div className="progress-bar-track" style={{ marginTop: 12, maxWidth: 280, margin: '12px auto 0' }}>
-            <div className="progress-bar-fill" style={{
-              width: `${Math.min(pct, 100)}%`,
-              background: pct >= 90 ? 'linear-gradient(90deg, #EF4444, #F87171)'
-                : pct >= 65 ? 'linear-gradient(90deg, #D97706, #FBBF24)'
-                : 'linear-gradient(90deg, var(--accent), var(--accent-2))'
-            }} />
-          </div>
-          <p className="text-center text-muted mt-8" style={{ fontSize: '0.75rem' }}>
-            Spent this week: ₹{spent.toLocaleString('en-IN')} / ₹{wslVal.toLocaleString('en-IN')} ({pct}%)
-          </p>
-
-          <div className="chk-grid">
-            <div className="chk-card">
-              <span className="chk-label">Smart Budget Pool</span>
-              <span className={`chk-val ${pool < 0 ? 'text-danger' : ''}`}>₹{pool.toLocaleString('en-IN')}</span>
-            </div>
-            <div className="chk-card">
-              <span className="chk-label">Month's Surplus</span>
-              <span className="chk-val">₹{parseFloat(sbState.monthly_expense).toLocaleString('en-IN')}</span>
-            </div>
-            <div className="chk-card">
-              <span className="chk-label">Week Number</span>
-              <span className="chk-val">{sbState.week_number} / 4+</span>
-            </div>
-            <div className="chk-card">
-              <span className="chk-label">Remaining Days</span>
-              <span className="chk-val">{sbState.remaining_days}</span>
-            </div>
-          </div>
-          
-          {parseFloat(sbState.outstanding_deficit) > 0 && (
-            <div style={{ background: 'rgba(248,113,113,.1)', color: 'var(--danger)', padding: '6px 10px', borderRadius: 4, margin: '12px auto 0', fontSize: '0.8rem', fontWeight: 600, display: 'inline-block' }}>
-              ⚠️ Outstanding Deficit Carried Forward: ₹{parseFloat(sbState.outstanding_deficit).toLocaleString('en-IN')}
-            </div>
-          )}
-        </div>
-
-        {/* Form */}
-        <div className="card mt-16">
-          <h3 className="section-title">{editingId ? 'Edit Expense' : 'Log Expense'}</h3>
-          {sbState.is_exhausted && (
-             <p className="text-danger mb-16" style={{ fontSize: '0.8rem' }}>⚠️ Your budget is completely exhausted for this month.</p>
-          )}
-          {sbState.is_month_settled && (
-             <p className="text-danger mb-16" style={{ fontSize: '0.8rem' }}>⚠️ This month is settled. You cannot log new expenses.</p>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            <div className="grid-2">
-              <div className="input-group">
-                <label>Amount (₹)</label>
-                <input
-                  type="number"
-                  className="input"
-                  placeholder="0"
-                  value={form.amount}
-                  onChange={e => setForm({ ...form, amount: e.target.value })}
-                  min="0.01"
-                  step="0.01"
-                  required
-                />
-              </div>
-              <div className="input-group">
-                <label>Date</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={form.date}
-                  onChange={e => setForm({ ...form, date: e.target.value })}
-                  max={toISODate(new Date())}
-                  required
-                />
+          {/* ─────────────────────────────────────────────────────────────
+              LOG EXPENSE SECTION (Modernized Glass Container)
+             ───────────────────────────────────────────────────────────── */}
+          <div className="glass-card mb-32">
+            <div className="flex items-center justify-between mb-24">
+              <div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: '#F8FAFC' }}>
+                  💸 Log Expense
+                </h2>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                  Record a transaction to update your daily spend limit
+                </span>
               </div>
             </div>
-            <div className="input-group mt-12">
-              <label>Description (Optional)</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="e.g. Zomato, Groceries"
-                value={form.description}
-                onChange={e => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div className="row mt-16" style={{ gap: 8 }}>
-              <Button type="submit" full disabled={logging || sbState.is_exhausted || sbState.is_month_settled}>
-                {editingId ? 'Update Expense' : 'Add Expense'}
-              </Button>
-              {editingId && (
-                <Button type="button" variant="secondary" onClick={() => {
-                  setEditingId(null);
-                  setForm({ amount: '', description: '', date: toISODate(new Date()) });
-                }}>Cancel</Button>
-              )}
-            </div>
-          </form>
-        </div>
 
-        {/* Transactions List */}
-        <div className="card mt-16" style={{ marginBottom: 120 }}>
-          <div className="row row-between mb-16">
-            <h3 className="section-title" style={{ margin: 0 }}>Transaction History</h3>
-            {!sbState.is_month_settled && (
-              <Button size="sm" variant="secondary" onClick={() => setModalMode('end_week')}>
-                End Week Now
-              </Button>
+            {formError && (
+              <div
+                style={{
+                  background: 'rgba(248, 113, 113, 0.1)',
+                  border: '1px solid rgba(248, 113, 113, 0.3)',
+                  color: '#F87171',
+                  padding: '12px 16px',
+                  borderRadius: 12,
+                  marginBottom: 20,
+                  fontSize: '0.85rem',
+                }}
+              >
+                ⚠️ {formError}
+              </div>
             )}
-          </div>
 
-          <div className="list-group">
-            {sbState.entries.length === 0 ? (
-              <p className="text-muted" style={{ fontSize: '0.8rem' }}>No expenses logged this month.</p>
-            ) : (
-              sbState.entries.map((entry) => {
-                const isSettled = isDateInSettledWeek(entry.expense_date, sbState.week_statuses);
-                return (
-                  <ListItem 
-                    key={entry.id}
-                    title={entry.description || 'Smart Budget Expense'}
-                    subtitle={`${entry.expense_date} ${isSettled ? '• ⚠️ PAST WEEK' : ''}`}
-                    extra={<span style={{ fontWeight: 600, color: 'var(--text)' }}>-₹{parseFloat(entry.amount).toLocaleString('en-IN')}</span>}
-                    onEdit={sbState.is_month_settled ? null : () => handleEditInit(entry)}
-                    onDelete={sbState.is_month_settled ? null : () => handleDelete(entry.id)}
+            <form onSubmit={handleSubmit}>
+              {/* 1. Amount Field */}
+              <div className="mb-24">
+                <span className="section-label-glow">AMOUNT</span>
+                <div className="currency-input-wrapper">
+                  <span className="currency-symbol">₹</span>
+                  <input
+                    type="number"
+                    className="currency-input"
+                    placeholder="0.00"
+                    min="0.01"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    required
                   />
-                );
-              })
+                </div>
+              </div>
+
+              {/* 2. Category Selection System */}
+              <div className="mb-24">
+                <span className="section-label-glow">CATEGORY</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {categories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      className={`category-chip ${selectedCategory === cat.name ? 'active' : ''}`}
+                      onClick={() => setSelectedCategory(cat.name)}
+                    >
+                      <span>{cat.icon}</span>
+                      <span>{cat.name}</span>
+                    </button>
+                  ))}
+
+                  {/* Add Custom Category Toggle Chip */}
+                  <button
+                    type="button"
+                    className="category-chip category-chip-add"
+                    onClick={() => setIsAddingCustom(!isAddingCustom)}
+                  >
+                    <span>➕</span>
+                    <span>Add Custom Category</span>
+                  </button>
+                </div>
+
+                {/* Inline Custom Category Creator */}
+                {isAddingCustom && (
+                  <div className="custom-cat-input-group">
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ width: 60, textAlign: 'center' }}
+                      placeholder="Icon"
+                      value={customEmoji}
+                      onChange={(e) => setCustomEmoji(e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ flex: 1 }}
+                      placeholder="Category name (e.g. Subscriptions)"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: '10px 18px', fontSize: '0.85rem' }}
+                      onClick={handleAddCustomCategory}
+                    >
+                      Add & Select
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Date & Description Row */}
+              <div className="grid-2 mb-24">
+                <div>
+                  <span className="section-label-glow">DATE</span>
+                  <input
+                    type="date"
+                    className="input"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <span className="section-label-glow">DESCRIPTION (OPTIONAL)</span>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Dinner with team, Taxi"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <button type="submit" className="submit-btn">
+                ✨ Log Expense
+              </button>
+            </form>
+
+            {/* Submitted Payload Confirmation */}
+            {submittedPayload && (
+              <div className="payload-preview">
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                  ✅ Expense Logged Successfully!
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', opacity: 0.9 }}>
+                  Payload: {JSON.stringify(submittedPayload, null, 2)}
+                </div>
+              </div>
             )}
           </div>
-        </div>
 
+          {/* ─────────────────────────────────────────────────────────────
+              FUTURE STEP: Spending Charts & Analytics Placeholder
+             ───────────────────────────────────────────────────────────── */}
+          {/* <div className="placeholder-section">
+            [FUTURE STEP: Spending Charts & Analytics]
+          </div> */}
+
+          {/* ─────────────────────────────────────────────────────────────
+              FUTURE STEP: Recent Transactions List Placeholder
+             ───────────────────────────────────────────────────────────── */}
+          {/* <div className="placeholder-section">
+            [FUTURE STEP: Recent Transactions List]
+          </div> */}
+        </div>
       </div>
-
-      {/* ── Modals ── */}
-      
-      {/* End Week Confirmation */}
-      <Modal open={modalMode === 'end_week'} onClose={() => setModalMode(null)} title="End Week?">
-        <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: 20 }}>
-          Are you sure you want to trigger week-end settlement? This will lock in your weekly 
-          spending, deduct your WSL (₹{wslVal.toLocaleString('en-IN')}) from the main pool, 
-          and recalculate limits for the remaining {sbState.remaining_weeks - 1} week(s).
-        </p>
-        <Button full onClick={handleEndWeek} disabled={logging}>Confirm & Calculate</Button>
-      </Modal>
-
-      {/* Allocate Surplus */}
-      <Modal open={modalMode === 'allocate_surplus'} onClose={() => setModalMode(null)} title="Month Complete!">
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <span style={{ fontSize: '3rem' }}>🎉</span>
-          <p style={{ marginTop: 10, fontWeight: 600 }}>You finished the month with a surplus of</p>
-          <h2 style={{ color: 'var(--success)' }}>₹{parseFloat(settlementResult?.amount || 0).toLocaleString('en-IN')}</h2>
-        </div>
-        <p className="text-muted mb-16" style={{ fontSize: '0.9rem' }}>Where would you like to transfer this surplus?</p>
-        <select className="input mb-16" value={surplusDest} onChange={(e) => setSurplusDest(e.target.value)}>
-          <option value="savings">Savings Bucket</option>
-          <option value="buffer_reserve">Buffer Reserve (Emergency)</option>
-        </select>
-        <Button full onClick={handleAllocateSurplus} disabled={logging}>Transfer & Complete Month</Button>
-      </Modal>
-
-      {/* Outstanding Deficit */}
-      <Modal open={modalMode === 'outstanding_deficit'} onClose={() => setModalMode(null)} title="Month Complete (Deficit)">
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <span style={{ fontSize: '3rem' }}>⚠️</span>
-          <p style={{ marginTop: 10, fontWeight: 600 }}>You finished with a deficit of ₹{parseFloat(settlementResult?.amount || 0).toLocaleString('en-IN')}</p>
-          <p className="text-muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
-            Your Buffer Reserve (₹{efBalance.toLocaleString('en-IN')}) did not have enough to fully cover this.
-          </p>
-        </div>
-        <div style={{ background: 'rgba(248,113,113,.1)', color: 'var(--danger)', padding: '12px', borderRadius: '8px', fontSize: '0.9rem', marginBottom: 20 }}>
-          The remaining deficit of <strong>₹{parseFloat(settlementResult?.remaining_deficit || 0).toLocaleString('en-IN')}</strong> will 
-          be carried forward and deducted from next month's salary.
-        </div>
-        <Button full variant="secondary" onClick={() => {
-          setModalMode(null);
-          fetchData();
-        }}>Acknowledge & Complete Month</Button>
-      </Modal>
     </div>
   );
 }

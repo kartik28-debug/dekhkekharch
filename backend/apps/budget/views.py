@@ -21,7 +21,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.services.allocation import apply_allocation, lock_allocation
+from core.services.allocation import apply_allocation, lock_allocation, unlock_allocation
 from core.utils.atomic_ops import (
     transfer_between_buckets,
     InsufficientFundsError,
@@ -235,6 +235,31 @@ class LockAllocationView(APIView):
         data = _build_dashboard_data(user, allocation, balances)
         out_serializer = DashboardSerializer(data)
         return Response(out_serializer.data, status=status.HTTP_200_OK)
+
+
+class UnlockAllocationView(APIView):
+    """Unlock the current month's allocation."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user = _get_demo_user()
+        if user is None:
+            return Response(
+                {"detail": "No users found."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            unlock_allocation(user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        allocation, balances = _get_current_allocation_and_balances(user)
+        data = _build_dashboard_data(user, allocation, balances)
+        out_serializer = DashboardSerializer(data)
+        return Response(out_serializer.data, status=status.HTTP_200_OK)
+
 
 
 # ---------------------------------------------------------------------------

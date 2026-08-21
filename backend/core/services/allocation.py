@@ -258,6 +258,40 @@ def lock_allocation(user) -> "MonthlyAllocation":  # noqa: F821
     return allocation
 
 
+def unlock_allocation(user) -> "MonthlyAllocation":  # noqa: F821
+    """
+    Unlock the current month's MonthlyAllocation.
+
+    Returns:
+        The unlocked MonthlyAllocation instance.
+
+    Raises:
+        ValueError: If no allocation exists for the current month.
+    """
+    from datetime import date
+
+    from apps.budget.models import MonthlyAllocation
+
+    today = date.today()
+    with transaction.atomic():
+        allocation = MonthlyAllocation.objects.select_for_update().filter(
+            user=user,
+            month=today.month,
+            year=today.year,
+        ).first()
+
+        if allocation is None:
+            raise ValueError(
+                "No allocation found for the current month."
+            )
+
+        allocation.is_locked = False
+        allocation.save(update_fields=["is_locked"])
+
+    return allocation
+
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from django.urls import path
 from .views import (
     DashboardView,
     LockAllocationView,
+    UnlockAllocationView,
     SalaryView,
     SavingsAllocationView,
     GoalListCreateView,
@@ -29,6 +30,9 @@ dashboard_urlpatterns = [
 
     # POST /api/dashboard/lock/    → 'Start Month' — lock current month
     path("lock/", LockAllocationView.as_view(), name="dashboard-lock"),
+
+    # POST /api/dashboard/unlock/  → unlock current month
+    path("unlock/", UnlockAllocationView.as_view(), name="dashboard-unlock"),
 ]
 
 savings_urlpatterns = [

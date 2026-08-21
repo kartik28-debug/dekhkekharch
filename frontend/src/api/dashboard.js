@@ -53,3 +53,12 @@ export async function lockMonth() {
   if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
   return data;
 }
+
+/** POST /api/dashboard/unlock/ — unlock the current month */
+export async function unlockMonth() {
+  const res = await fetch(`${BASE}/unlock/`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  return data;
+}
+

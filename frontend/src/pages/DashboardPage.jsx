@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import NavBar from '../components/NavBar';
 import Card from '../components/Card';
-import { getDashboard, postSalary, lockMonth } from '../api/dashboard';
+import { getDashboard, postSalary, lockMonth, unlockMonth } from '../api/dashboard';
 
 const NAV_CARDS = [
   { id: 'smart-budgeting', icon: '📊', label: 'Smart Budgeting', sub: 'DSL · Weekly limits', path: '/smart-budgeting' },
@@ -135,7 +135,7 @@ export default function DashboardPage() {
     }
   }
 
-  // ── Lock month ─────────────────────────────────────────────────────────
+  // ── Lock / Unlock month ──────────────────────────────────────────────────
   async function handleLock() {
     try {
       const data = await lockMonth();
@@ -144,6 +144,17 @@ export default function DashboardPage() {
       setSubmitError(err.message);
     }
   }
+
+  async function handleUnlock() {
+    try {
+      const data = await unlockMonth();
+      setDashData(data);
+      setAppliedNote(null);
+    } catch (err) {
+      setSubmitError(err.message);
+    }
+  }
+
 
   // ── Derived display values ─────────────────────────────────────────────
   const buckets = dashData?.buckets ?? {};
@@ -264,7 +275,7 @@ export default function DashboardPage() {
             <div className="ratio-grid mb-16">
               {[
                 { key: 'major', label: 'Major %' },
-                { key: 'dsl', label: 'DSL %' },
+                { key: 'dsl', label: 'Wants %' },
                 { key: 'savings', label: 'Savings %' },
                 { key: 'emergency', label: 'Emergency %' },
               ].map(({ key, label }) => (
@@ -291,7 +302,7 @@ export default function DashboardPage() {
             <div className="ratio-grid mb-16">
               {[
                 { key: 'major', label: 'Major %' },
-                { key: 'dsl', label: 'DSL %' },
+                { key: 'dsl', label: 'Wants %' },
                 { key: 'savings', label: 'Savings %' },
                 { key: 'emergency', label: 'Emergency %' },
               ].map(({ key, label }) => (
@@ -337,8 +348,19 @@ export default function DashboardPage() {
               </button>
             )}
             {isLocked && (
-              <div className="apply-note" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
-                🔒 Month locked — changes apply from next month
+              <div className="flex items-center" style={{ flex: 1, gap: 10 }}>
+                <div className="apply-note" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
+                  🔒 Month locked — changes apply from next month
+                </div>
+                <button
+                  id="unlock-month-btn"
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleUnlock}
+                  disabled={submitting}
+                >
+                  🔓 Unlock
+                </button>
               </div>
             )}
           </div>
@@ -356,11 +378,11 @@ export default function DashboardPage() {
               </p>
             )}
             <p className="text-muted mt-4">
-              {hasSalary ? 'DSL + Savings + Emergency' : 'Set a salary to get started'}
+              {hasSalary ? 'Monthly Wants + Savings + Emergency' : 'Set a salary to get started'}
             </p>
           </Card>
           <Card>
-            <p className="section-label mb-8">DSL Budget</p>
+            <p className="section-label mb-8">Monthly Wants</p>
             {loading ? (
               <Shimmer style={{ height: 28, width: '60%', marginBottom: 6 }} />
             ) : (
@@ -379,7 +401,7 @@ export default function DashboardPage() {
         <div className="bucket-grid">
           {[
             { key: 'major', label: 'Major Expenses', color: 'var(--accent)', icon: '🏠' },
-            { key: 'dsl', label: 'DSL', color: 'var(--accent-3)', icon: '📊' },
+            { key: 'dsl', label: 'Monthly Wants Budget', color: 'var(--accent-3)', icon: '📊' },
             { key: 'savings', label: 'Savings', color: 'var(--success)', icon: '💎' },
             { key: 'buffer_reserve', label: 'Emergency', color: 'var(--danger)', icon: '🛡️' },
           ].map(({ key, label, color, icon }) => {
