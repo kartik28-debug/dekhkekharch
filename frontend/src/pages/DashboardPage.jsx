@@ -7,7 +7,7 @@ import { getDashboard, postSalary, lockMonth, unlockMonth } from '../api/dashboa
 const NAV_CARDS = [
   { id: 'smart-budgeting', icon: '📊', label: 'Smart Budgeting', sub: 'DSL · Weekly limits', path: '/smart-budgeting' },
   { id: 'major-expenses', icon: '🏠', label: 'Major Expenses', sub: 'EMI, Rent, Bills', path: '/major-expenses' },
-  { id: 'emergency', icon: '🛡️', label: 'Emergency Fund', sub: 'Safety net', path: '/emergency' },
+  { id: 'emergency', icon: '🛡️', label: 'Buffer Reserve', sub: 'Safety net', path: '/emergency' },
   { id: 'savings', icon: '💎', label: 'Savings', sub: 'Goals · Stocks', path: '/savings' },
 ];
 
@@ -277,7 +277,7 @@ export default function DashboardPage() {
                 { key: 'major', label: 'Major %' },
                 { key: 'dsl', label: 'Wants %' },
                 { key: 'savings', label: 'Savings %' },
-                { key: 'emergency', label: 'Emergency %' },
+                { key: 'emergency', label: 'Buffer %' },
               ].map(({ key, label }) => (
                 <div key={key}>
                   <label htmlFor={`ratio-${key}`}>{label}</label>
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                 { key: 'major', label: 'Major %' },
                 { key: 'dsl', label: 'Wants %' },
                 { key: 'savings', label: 'Savings %' },
-                { key: 'emergency', label: 'Emergency %' },
+                { key: 'emergency', label: 'Buffer %' },
               ].map(({ key, label }) => (
                 <div key={key}>
                   <label>{label}</label>
@@ -378,7 +378,7 @@ export default function DashboardPage() {
               </p>
             )}
             <p className="text-muted mt-4">
-              {hasSalary ? 'Monthly Wants + Savings + Emergency' : 'Set a salary to get started'}
+              {hasSalary ? 'Monthly Wants + Savings + Buffer Reserve' : 'Set a salary to get started'}
             </p>
           </Card>
           <Card>
@@ -403,7 +403,7 @@ export default function DashboardPage() {
             { key: 'major', label: 'Major Expenses', color: 'var(--accent)', icon: '🏠' },
             { key: 'dsl', label: 'Monthly Wants Budget', color: 'var(--accent-3)', icon: '📊' },
             { key: 'savings', label: 'Savings', color: 'var(--success)', icon: '💎' },
-            { key: 'buffer_reserve', label: 'Emergency', color: 'var(--danger)', icon: '🛡️' },
+            { key: 'buffer_reserve', label: 'Buffer Reserve', color: 'var(--danger)', icon: '🛡️' },
           ].map(({ key, label, color, icon }) => {
             const bal = buckets[key]?.balance;
             const alloc = buckets[key]?.allocated;

@@ -10,6 +10,25 @@ const INITIAL_CATEGORIES = [
   { id: 'others', name: 'Others', icon: '📦' },
 ];
 
+const INITIAL_EXPENSES = [
+  {
+    id: 'tx-1',
+    amount: 450,
+    category: 'Food',
+    date: new Date().toISOString().split('T')[0],
+    description: 'Zomato Lunch Order',
+    icon: '🍔',
+  },
+  {
+    id: 'tx-2',
+    amount: 280,
+    category: 'Travel',
+    date: new Date().toISOString().split('T')[0],
+    description: 'Uber Ride',
+    icon: '🚗',
+  },
+];
+
 export default function SmartBudgetingPage() {
   // ── Form State ──────────────────────────────────────────────────────────
   const [amount, setAmount] = useState('');
@@ -23,8 +42,11 @@ export default function SmartBudgetingPage() {
   const [customName, setCustomName] = useState('');
   const [customEmoji, setCustomEmoji] = useState('✨');
 
+  // ── Transaction History State ───────────────────────────────────────────
+  const [expensesList, setExpensesList] = useState(INITIAL_EXPENSES);
+
   // ── Feedback & Output State ─────────────────────────────────────────────
-  const [submittedPayload, setSubmittedPayload] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const [formError, setFormError] = useState(null);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -33,7 +55,6 @@ export default function SmartBudgetingPage() {
     const trimmed = customName.trim();
     if (!trimmed) return;
 
-    // Check if category already exists (case-insensitive)
     const exists = categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase());
     if (!exists) {
       const newCat = {
@@ -54,6 +75,7 @@ export default function SmartBudgetingPage() {
   const handleSubmit = (e) => {
     e.preventDefault();
     setFormError(null);
+    setSuccessMessage(null);
 
     const parsedAmount = parseFloat(amount);
     if (!parsedAmount || parsedAmount <= 0) {
@@ -66,20 +88,38 @@ export default function SmartBudgetingPage() {
       return;
     }
 
-    // Exact payload structure required for backend integration
-    const payload = {
+    // Find category icon
+    const categoryObj = categories.find((c) => c.name === selectedCategory);
+    const categoryIcon = categoryObj ? categoryObj.icon : '💸';
+
+    // Construct new transaction entry
+    const newTransaction = {
+      id: `tx-${Date.now()}`,
       amount: parsedAmount,
       category: selectedCategory,
       date: date,
-      description: description.trim(),
+      description: description.trim() || selectedCategory,
+      icon: categoryIcon,
     };
 
-    console.log('[SmartBudgeting] Log Expense Payload:', payload);
-    setSubmittedPayload(payload);
+    // Update Transaction History State (prepend to top)
+    setExpensesList((prev) => [newTransaction, ...prev]);
 
-    // Reset amount & description after successful submission
+    // Show temporary success feedback toast
+    setSuccessMessage(`Logged ₹${parsedAmount.toLocaleString('en-IN')} for ${selectedCategory}`);
+
+    // Reset form inputs
     setAmount('');
     setDescription('');
+
+    // Clear success message after 4 seconds
+    setTimeout(() => {
+      setSuccessMessage(null);
+    }, 4000);
+  };
+
+  const handleDeleteExpense = (id) => {
+    setExpensesList((prev) => prev.filter((item) => item.id !== id));
   };
 
   return (
@@ -227,19 +267,57 @@ export default function SmartBudgetingPage() {
           filter: brightness(1.08);
         }
 
-        .submit-btn:active {
-          transform: translateY(0);
+        .toast-success {
+          margin-top: 20px;
+          padding: 14px 18px;
+          background: rgba(52, 211, 153, 0.12);
+          border: 1px solid rgba(52, 211, 153, 0.3);
+          border-radius: 12px;
+          color: #34D399;
+          font-size: 0.88rem;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          animation: fadeIn 0.3s ease;
         }
 
-        .payload-preview {
-          margin-top: 24px;
-          padding: 16px 20px;
-          background: rgba(74, 222, 128, 0.08);
-          border: 1px solid rgba(74, 222, 128, 0.25);
+        .tx-card-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px;
+          background: rgba(26, 26, 38, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.06);
           border-radius: 14px;
-          color: #4ADE80;
-          font-size: 0.85rem;
-          animation: fadeIn 0.3s ease;
+          margin-bottom: 10px;
+          transition: all 0.2s ease;
+        }
+
+        .tx-card-item:hover {
+          background: rgba(30, 30, 45, 0.8);
+          border-color: rgba(124, 106, 246, 0.25);
+          transform: translateX(2px);
+        }
+
+        .tx-icon-badge {
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          background: rgba(124, 106, 246, 0.12);
+          border: 1px solid rgba(124, 106, 246, 0.25);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 1.25rem;
+          flex-shrink: 0;
+        }
+
+        .tx-amount-neg {
+          font-size: 1.05rem;
+          font-weight: 700;
+          font-family: 'Space Grotesk', sans-serif;
+          color: #F87171;
         }
 
         .section-label-glow {
@@ -250,16 +328,6 @@ export default function SmartBudgetingPage() {
           color: #94A3B8;
           margin-bottom: 10px;
           display: block;
-        }
-
-        .placeholder-section {
-          padding: 20px;
-          border: 1px dashed rgba(255, 255, 255, 0.1);
-          border-radius: 14px;
-          color: #64748B;
-          text-align: center;
-          font-size: 0.82rem;
-          margin-bottom: 24px;
         }
       `}</style>
 
@@ -278,15 +346,7 @@ export default function SmartBudgetingPage() {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              FUTURE STEP: DSL Metrics & Summary Cards Wrapper
-              (Left clean for plugging in metrics, WSL progress, and rings)
-             ───────────────────────────────────────────────────────────── */}
-          {/* <div className="placeholder-section">
-            [FUTURE STEP: DSL Metrics & Summary Cards]
-          </div> */}
-
-          {/* ─────────────────────────────────────────────────────────────
-              LOG EXPENSE SECTION (Modernized Glass Container)
+              LOG EXPENSE SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card mb-32">
             <div className="flex items-center justify-between mb-24">
@@ -424,32 +484,110 @@ export default function SmartBudgetingPage() {
               </button>
             </form>
 
-            {/* Submitted Payload Confirmation */}
-            {submittedPayload && (
-              <div className="payload-preview">
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                  ✅ Expense Logged Successfully!
-                </div>
-                <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', opacity: 0.9 }}>
-                  Payload: {JSON.stringify(submittedPayload, null, 2)}
-                </div>
+            {/* Success Toast */}
+            {successMessage && (
+              <div className="toast-success">
+                <span>✅</span>
+                <span>{successMessage}</span>
               </div>
             )}
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              FUTURE STEP: Spending Charts & Analytics Placeholder
+              RECENT EXPENSES / TRANSACTION HISTORY SECTION
              ───────────────────────────────────────────────────────────── */}
-          {/* <div className="placeholder-section">
-            [FUTURE STEP: Spending Charts & Analytics]
-          </div> */}
+          <div className="glass-card">
+            <div className="flex items-center justify-between mb-20">
+              <div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: '#F8FAFC' }}>
+                  📜 Recent Expenses
+                </h2>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                  Live history of logged transactions for this period
+                </span>
+              </div>
+              <span
+                style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: '#94A3B8',
+                  background: 'rgba(255,255,255,0.05)',
+                  padding: '4px 10px',
+                  borderRadius: 20,
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                {expensesList.length} {expensesList.length === 1 ? 'Entry' : 'Entries'}
+              </span>
+            </div>
 
-          {/* ─────────────────────────────────────────────────────────────
-              FUTURE STEP: Recent Transactions List Placeholder
-             ───────────────────────────────────────────────────────────── */}
-          {/* <div className="placeholder-section">
-            [FUTURE STEP: Recent Transactions List]
-          </div> */}
+            {/* List or Empty State */}
+            {expensesList.length === 0 ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '36px 20px',
+                  border: '1px dashed rgba(255,255,255,0.1)',
+                  borderRadius: 16,
+                }}
+              >
+                <span style={{ fontSize: '2.5rem' }}>🧾</span>
+                <p style={{ margin: '8px 0 4px', fontWeight: 600, color: '#F8FAFC' }}>
+                  No expenses logged yet this week
+                </p>
+                <p className="text-muted" style={{ fontSize: '0.82rem', margin: 0 }}>
+                  Logged transactions will appear here instantly.
+                </p>
+              </div>
+            ) : (
+              <div>
+                {expensesList.map((tx) => (
+                  <div key={tx.id} className="tx-card-item">
+                    <div className="flex items-center" style={{ gap: 14 }}>
+                      <div className="tx-icon-badge">{tx.icon}</div>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#F8FAFC' }}>
+                          {tx.description}
+                        </div>
+                        <div className="flex items-center" style={{ gap: 8, marginTop: 2 }}>
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              color: '#A78BFA',
+                              background: 'rgba(124, 106, 246, 0.12)',
+                              padding: '2px 8px',
+                              borderRadius: 6,
+                            }}
+                          >
+                            {tx.category}
+                          </span>
+                          <span className="text-muted" style={{ fontSize: '0.78rem' }}>
+                            {tx.date}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center" style={{ gap: 12 }}>
+                      <span className="tx-amount-neg">
+                        -₹{tx.amount.toLocaleString('en-IN')}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        onClick={() => handleDeleteExpense(tx.id)}
+                        title="Delete Transaction"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
