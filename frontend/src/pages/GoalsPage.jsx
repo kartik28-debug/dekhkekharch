@@ -4,6 +4,49 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import NavBar from '../components/NavBar';
 import { getGoals, createGoal, updateGoal, deleteGoal } from '../api/goals';
 
+// ── Constants ────────────────────────────────────────────────────────────────
+const MAX_TARGET = 10_000_000; // ₹1 Crore hard cap per goal target
+const MIN_NAME_LEN = 2;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Validate a raw string value as a positive numeric target.
+ * Returns { value: number, error: string|null }
+ */
+function validateTarget(raw) {
+  if (raw === '' || raw === null || raw === undefined) {
+    return { value: null, error: 'Target amount is required.' };
+  }
+  // Reject anything that isn't a simple number (no operators, no spaces mid-string)
+  if (!/^\d+(\.\d+)?$/.test(String(raw).trim())) {
+    return { value: null, error: 'Enter a valid positive number (e.g. 50000).' };
+  }
+  const n = parseFloat(raw);
+  if (isNaN(n)) {
+    return { value: null, error: 'Enter a valid number.' };
+  }
+  if (n <= 0) {
+    return { value: null, error: 'Target must be greater than ₹0.' };
+  }
+  if (n > MAX_TARGET) {
+    return { value: null, error: `Target cannot exceed ₹${MAX_TARGET.toLocaleString('en-IN')}.` };
+  }
+  return { value: n, error: null };
+}
+
+/**
+ * Validate a goal name string.
+ * Returns error string or null.
+ */
+function validateName(raw) {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return 'Goal name cannot be empty.';
+  if (trimmed.length < MIN_NAME_LEN) return `Name must be at least ${MIN_NAME_LEN} characters.`;
+  if (trimmed.length > 100) return 'Name must be 100 characters or less.';
+  return null;
+}
+
 /* ── tiny shimmer helper ── */
 function Shimmer({ style }) {
   return (
@@ -17,18 +60,29 @@ function Shimmer({ style }) {
   );
 }
 
+/* ── Inline validation error ── */
+function FieldError({ msg }) {
+  if (!msg) return null;
+  return (
+    <p style={{ color: 'var(--danger)', fontSize: '0.78rem', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+      ⚠ {msg}
+    </p>
+  );
+}
+
 /* ─────────────────────────────────────────────────────────── */
 export default function GoalsPage() {
   const location   = useLocation();
   const goalAmount = parseFloat(location.state?.goalAmount ?? 0);
 
   /* ── remote state ── */
-  const [goals, setGoals]     = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [goals, setGoals]       = useState([]);
+  const [loading, setLoading]   = useState(true);
   const [apiError, setApiError] = useState(null);
 
   /* ── new goal name input ── */
   const [newName, setNewName]   = useState('');
+  const [nameError, setNameError] = useState(null); // inline name validation error
   const [adding, setAdding]     = useState(false);
   const [addError, setAddError] = useState(null);
 
@@ -37,6 +91,15 @@ export default function GoalsPage() {
 
   /* ── local manual amounts (unsaved input state), keyed by goal id ── */
   const [manualDraft, setManualDraft] = useState({});
+
+  /* ── local target draft (auto mode), keyed by goal id ── */
+  const [targetDraft, setTargetDraft] = useState({});
+
+  /* ── per-goal target validation errors (auto mode) ── */
+  const [targetErrors, setTargetErrors] = useState({});
+
+  /* ── per-goal manual validation errors (manual mode) ── */
+  const [manualErrors, setManualErrors] = useState({});
 
   /* ── deleting set (track in-flight deletions) ── */
   const [deletingIds, setDeletingIds] = useState(new Set());
@@ -56,6 +119,9 @@ export default function GoalsPage() {
         }
       });
       setManualDraft(draft);
+      // Clear stale validation state on reload
+      setTargetErrors({});
+      setManualErrors({});
     } catch (err) {
       setApiError(err.message);
     } finally {
@@ -67,12 +133,15 @@ export default function GoalsPage() {
 
   /* ── Add goal ── */
   const handleAdd = async () => {
+    // Validate name before submitting
+    const err = validateName(newName);
+    if (err) { setNameError(err); return; }
+    setNameError(null);
+
     const trimmed = newName.trim();
-    if (!trimmed) return;
     setAdding(true);
     setAddError(null);
     try {
-      // priority = current max + 1 so new goals go to the end
       const maxPriority = goals.reduce((m, g) => Math.max(m, g.priority ?? 0), -1);
       const created = await createGoal({
         name: trimmed,
@@ -96,6 +165,8 @@ export default function GoalsPage() {
       await deleteGoal(id);
       setGoals(prev => prev.filter(g => g.id !== id));
       setManualDraft(prev => { const copy = { ...prev }; delete copy[id]; return copy; });
+      setTargetErrors(prev => { const copy = { ...prev }; delete copy[id]; return copy; });
+      setManualErrors(prev => { const copy = { ...prev }; delete copy[id]; return copy; });
     } catch (err) {
       setApiError(err.message);
     } finally {
@@ -103,31 +174,62 @@ export default function GoalsPage() {
     }
   };
 
-  /* ── Save manual_amount on blur ── */
+  /* ── Save manual_amount on blur (with validation) ── */
   const handleManualBlur = async (g, isLast) => {
-    if (isLast) return; // last goal is always auto-leftover, not manually edited
-    const raw = parseFloat(manualDraft[g.id]);
-    const newAmt = isNaN(raw) ? null : raw;
-    // Only call API if value actually changed
-    if (String(newAmt) === String(g.manual_amount !== null ? parseFloat(g.manual_amount) : null)) return;
+    if (isLast) return;
+    const rawStr = manualDraft[g.id] ?? '';
+
+    // Validate: must be non-negative number not exceeding goal budget
+    if (rawStr === '' || rawStr === undefined) {
+      // Empty → treat as 0 (user clearing the field)
+      setManualErrors(prev => ({ ...prev, [g.id]: null }));
+      const updated = await updateGoal(g.id, { manual_amount: null }).catch(() => null);
+      if (updated) setGoals(prev => prev.map(x => x.id === g.id ? updated : x));
+      return;
+    }
+
+    // Reject non-numeric strings (e.g. "542-25245")
+    if (!/^\d+(\.\d{1,2})?$/.test(String(rawStr).trim())) {
+      setManualErrors(prev => ({ ...prev, [g.id]: 'Enter a valid positive number.' }));
+      return;
+    }
+
+    const n = parseFloat(rawStr);
+    if (isNaN(n) || n < 0) {
+      setManualErrors(prev => ({ ...prev, [g.id]: 'Amount cannot be negative.' }));
+      return;
+    }
+    if (n > MAX_TARGET) {
+      setManualErrors(prev => ({ ...prev, [g.id]: `Cannot exceed ₹${MAX_TARGET.toLocaleString('en-IN')}.` }));
+      return;
+    }
+
+    // Clear error and save
+    setManualErrors(prev => ({ ...prev, [g.id]: null }));
+    const prevVal = g.manual_amount !== null ? parseFloat(g.manual_amount) : null;
+    if (n === prevVal) return;
     try {
-      const updated = await updateGoal(g.id, { manual_amount: newAmt });
+      const updated = await updateGoal(g.id, { manual_amount: n });
       setGoals(prev => prev.map(x => x.id === g.id ? updated : x));
     } catch (_) { /* silent — user can retry */ }
   };
 
-  /* ── Save target_amount (auto mode) on blur ── */
-  const handleTargetBlur = async (g, rawVal) => {
-    const newTarget = parseFloat(rawVal) || 0;
+  /* ── Save target_amount (auto mode) on blur (with validation) ── */
+  const handleTargetBlur = async (g, rawStr) => {
+    const { value, error } = validateTarget(rawStr);
+    if (error) {
+      setTargetErrors(prev => ({ ...prev, [g.id]: error }));
+      return;
+    }
+    setTargetErrors(prev => ({ ...prev, [g.id]: null }));
+
+    const newTarget = value;
     if (newTarget === parseFloat(g.target_amount)) return;
     try {
       const updated = await updateGoal(g.id, { target_amount: newTarget });
       setGoals(prev => prev.map(x => x.id === g.id ? updated : x));
     } catch (_) { /* silent */ }
   };
-
-  /* ── local target draft ── */
-  const [targetDraft, setTargetDraft] = useState({});
 
   /* ── Drag to reorder (auto mode) ── */
   const onDragEnd = async result => {
@@ -136,39 +238,67 @@ export default function GoalsPage() {
     const [moved] = reordered.splice(result.source.index, 1);
     reordered.splice(result.destination.index, 0, moved);
 
-    // Optimistic update
     setGoals(reordered);
 
-    // Persist new priorities: index → priority
     try {
       await Promise.all(
         reordered.map((g, idx) =>
           g.priority !== idx ? updateGoal(g.id, { priority: idx }) : Promise.resolve()
         )
       );
-      // Refresh to get consistent server state
       const fresh = await getGoals();
       setGoals(fresh);
     } catch (_) { /* silent — optimistic already applied */ }
   };
 
-  /* ── Manual mode: compute leftover for the last goal ── */
-  const manualEnteredTotal = goals.slice(0, -1).reduce((sum, g) => {
-    return sum + (parseFloat(manualDraft[g.id] ?? g.manual_amount ?? 0) || 0);
-  }, 0);
+  /* ── Manual mode: compute leftover for the last goal ──────────────────────
+     Hard constraint: manualEnteredTotal must never exceed goalAmount.
+     Each non-last goal's contribution is clamped to [0, remaining budget].   */
+  const manualEnteredTotal = (() => {
+    let runningTotal = 0;
+    goals.slice(0, -1).forEach(g => {
+      const rawStr = manualDraft[g.id] ?? (g.manual_amount !== null ? String(parseFloat(g.manual_amount ?? 0)) : '');
+      // Only count valid, non-negative numbers
+      if (/^\d+(\.\d{1,2})?$/.test(String(rawStr).trim())) {
+        const n = Math.max(0, parseFloat(rawStr) || 0);
+        runningTotal = Math.min(runningTotal + n, goalAmount);
+      }
+    });
+    return runningTotal;
+  })();
   const lastGoalAmt = Math.max(goalAmount - manualEnteredTotal, 0);
 
-  /* ── Auto mode: FIFO allocation ── */
+  /* ── Auto mode: FIFO allocation ────────────────────────────────────────────
+     Hard constraint:
+       - Each goal's target must be a valid positive number (else treated as 0)
+       - The sum of all allocations is strictly capped at goalAmount
+       - Allocation is FIFO in priority order: goal[0] gets funded first        */
   const computeAutoAlloc = () => {
-    let remaining = goalAmount;
+    let remaining = Math.max(goalAmount, 0); // never go negative
     return goals.map(g => {
-      const target = parseFloat(targetDraft[g.id] ?? g.target_amount ?? 0) || 0;
-      const alloc  = Math.min(remaining, target);
+      // Use the draft value if present; fall back to persisted value.
+      // IMPORTANT: validate the draft string — only allow clean numeric strings.
+      const rawDraft = targetDraft[g.id];
+      let target = 0;
+      if (rawDraft !== undefined && rawDraft !== '') {
+        if (/^\d+(\.\d+)?$/.test(String(rawDraft).trim())) {
+          target = Math.max(0, parseFloat(rawDraft) || 0);
+        }
+        // else: invalid string → treat as 0 (don't allocate anything)
+      } else {
+        // No draft → use persisted value, clamped to [0, MAX_TARGET]
+        const persisted = parseFloat(g.target_amount ?? 0) || 0;
+        target = Math.min(Math.max(persisted, 0), MAX_TARGET);
+      }
+
+      // Allocate: never exceed remaining budget
+      const alloc = Math.min(remaining, target);
       remaining    = Math.max(remaining - alloc, 0);
       return { ...g, alloc };
     });
   };
   const autoAlloc = computeAutoAlloc();
+  const totalAutoAllocated = autoAlloc.reduce((s, g) => s + g.alloc, 0);
 
   return (
     <>
@@ -177,9 +307,23 @@ export default function GoalsPage() {
           0%   { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
-        .goals-error { background: rgba(255,95,95,.1); border: 1px solid var(--danger);
-          border-radius: 10px; padding: 10px 14px; font-size:.83rem;
-          color: var(--danger); margin-bottom:16px; }
+        .goals-error {
+          background: rgba(248,113,113,.08);
+          border: 1px solid rgba(248,113,113,.35);
+          border-radius: var(--radius-sm);
+          padding: 11px 16px;
+          font-size: .84rem;
+          color: var(--danger);
+          margin-bottom: 16px;
+        }
+        .field-error {
+          color: var(--danger);
+          font-size: 0.78rem;
+          margin-top: 4px;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
       `}</style>
 
       <NavBar title="Goals" />
@@ -215,25 +359,37 @@ export default function GoalsPage() {
             <input
               id="new-goal-name-input"
               className="input"
-              placeholder="e.g. New Laptop, Vacation – Goa…"
+              placeholder="e.g. New Laptop, Vacation – Goa… (min 2 chars)"
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={e => {
+                setNewName(e.target.value);
+                // Clear error on change so the user gets instant feedback
+                if (nameError) setNameError(validateName(e.target.value));
+              }}
               onKeyDown={e => e.key === 'Enter' && handleAdd()}
               disabled={adding}
-              style={{ flex: 1 }}
+              style={{ flex: 1, borderColor: nameError ? 'var(--danger)' : undefined }}
             />
             <button
               id="add-goal-name-btn"
               className="btn btn-primary"
               onClick={handleAdd}
-              disabled={!newName.trim() || adding}
+              disabled={adding}
             >
               {adding ? '…' : '+ Add'}
             </button>
           </div>
+
+          {/* Name validation error */}
+          {nameError && <p className="field-error">⚠ {nameError}</p>}
           {addError && (
             <p style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: 8 }}>{addError}</p>
           )}
+
+          {/* Validation hint */}
+          <p style={{ color: 'var(--muted)', fontSize: '0.74rem', marginTop: 6 }}>
+            At least {MIN_NAME_LEN} characters. Leading/trailing spaces are trimmed automatically.
+          </p>
 
           {/* Current goal name list */}
           {loading ? (
@@ -286,13 +442,14 @@ export default function GoalsPage() {
               <div className="col">
                 <p className="text-muted mb-8" style={{ fontSize: '0.82rem' }}>
                   Enter the amount for each goal. The <strong>last goal</strong> automatically receives the remaining balance.
-                  Amounts are saved when you leave each field.
+                  Amounts are saved when you leave each field. Each amount must be a positive number; the total cannot exceed the Goal Budget.
                 </p>
 
                 {goals.map((g, idx) => {
                   const isLast = idx === goals.length - 1;
                   const draftVal = manualDraft[g.id] ?? (g.manual_amount !== null ? String(parseFloat(g.manual_amount)) : '');
                   const displayAmt = isLast ? lastGoalAmt : (parseFloat(draftVal) || 0);
+                  const fieldErr = manualErrors[g.id];
 
                   return (
                     <div key={g.id} className="card" style={{ padding: '16px 20px' }}>
@@ -316,27 +473,49 @@ export default function GoalsPage() {
                           </span>
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ color: 'var(--muted)', fontWeight: 600 }}>₹</span>
-                          <input
-                            id={`manual-amt-${g.id}`}
-                            type="number"
-                            className="input"
-                            placeholder="0"
-                            value={draftVal}
-                            onChange={e => setManualDraft(prev => ({ ...prev, [g.id]: e.target.value }))}
-                            onBlur={() => handleManualBlur(g, false)}
-                            min={0}
-                            max={goalAmount}
-                          />
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ color: 'var(--muted)', fontWeight: 600 }}>₹</span>
+                            <input
+                              id={`manual-amt-${g.id}`}
+                              type="text"
+                              inputMode="decimal"
+                              className="input"
+                              placeholder="0"
+                              value={draftVal}
+                              onKeyDown={e => {
+                                if (['e', 'E', '+', '-'].includes(e.key)) {
+                                  e.preventDefault();
+                                }
+                              }}
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  setManualDraft(prev => ({ ...prev, [g.id]: val }));
+                                  // Clear error on change
+                                  if (manualErrors[g.id]) setManualErrors(prev => ({ ...prev, [g.id]: null }));
+                                }
+                              }}
+                              onBlur={() => handleManualBlur(g, false)}
+                              style={{ borderColor: fieldErr ? 'var(--danger)' : undefined }}
+                            />
+                          </div>
+                          {fieldErr && <p className="field-error">⚠ {fieldErr}</p>}
                         </div>
                       )}
                     </div>
                   );
                 })}
 
+                {/* Manual over-budget warning */}
+                {manualEnteredTotal > goalAmount && (
+                  <div style={{ background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.35)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '0.84rem', color: 'var(--danger)' }}>
+                    ⚠ Total manually allocated (₹{manualEnteredTotal.toLocaleString('en-IN')}) exceeds the Goal Budget (₹{goalAmount.toLocaleString('en-IN')}). The last goal receives ₹0 and amounts are clamped automatically.
+                  </div>
+                )}
+
                 {/* Summary */}
-                <div className="card mt-8" style={{ background: 'rgba(108,99,255,.08)', border: '1px solid rgba(108,99,255,.3)' }}>
+                <div className="card mt-8" style={{ background: 'rgba(124,106,246,.08)', border: '1px solid rgba(124,106,246,.25)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--muted)' }}>
                     <span>Manually allocated</span>
                     <span>₹{manualEnteredTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
@@ -346,9 +525,9 @@ export default function GoalsPage() {
                     <span style={{ color: 'var(--accent-2)' }}>₹{lastGoalAmt.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
                   </div>
                   <hr className="divider" style={{ margin: '10px 0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontFamily: 'Space Grotesk, sans-serif' }}>
                     <span>Total Budget</span>
-                    <span style={{ color: 'var(--accent)' }}>₹{goalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                    <span style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>₹{goalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
                   </div>
                 </div>
               </div>
@@ -358,91 +537,118 @@ export default function GoalsPage() {
             {mode === 'auto' && (
               <div className="col">
                 <p className="text-muted mb-8" style={{ fontSize: '0.82rem' }}>
-                  Drag ⠿ to set priority. Enter each goal's target. The <strong>#1 goal gets funded first</strong> from the available budget.
-                  Targets are saved when you leave each field.
+                  Drag ⠿ to set priority. Enter each goal's target amount (must be &gt; ₹0). The <strong>#1 goal gets funded first</strong> from the available budget.
+                  The sum of all "Allocated" amounts will never exceed your Goal Budget of ₹{goalAmount.toLocaleString('en-IN')}.
                 </p>
 
                 <DragDropContext onDragEnd={onDragEnd}>
                   <Droppable droppableId="auto-goals-list">
                     {provided => (
                       <div className="col" ref={provided.innerRef} {...provided.droppableProps}>
-                        {autoAlloc.map((g, idx) => (
-                          <Draggable key={g.id} draggableId={String(g.id)} index={idx}>
-                            {(prov, snapshot) => (
-                              <div
-                                ref={prov.innerRef}
-                                {...prov.draggableProps}
-                                className="card"
-                                style={{
-                                  ...prov.draggableProps.style,
-                                  padding: '14px 16px',
-                                  opacity: snapshot.isDragging ? 0.85 : 1,
-                                  background: snapshot.isDragging ? 'var(--border)' : undefined,
-                                }}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-                                  <span className="drag-handle" {...prov.dragHandleProps} title="Drag to reprioritize">⠿</span>
-                                  <span style={styles.indexBadge}>{idx + 1}</span>
-                                  <span style={{ flex: 1, fontWeight: 600, fontSize: '0.92rem' }}>{g.name}</span>
-                                  {idx === 0 && (
-                                    <span style={{ fontSize: '0.72rem', color: '#f7b731', background: 'rgba(247,183,49,.12)', padding: '2px 8px', borderRadius: 99 }}>
-                                      #1 Priority
-                                    </span>
-                                  )}
-                                </div>
+                        {autoAlloc.map((g, idx) => {
+                          const fieldErr = targetErrors[g.id];
+                          const draftVal = targetDraft[g.id] ?? (parseFloat(g.target_amount) || '');
+                          return (
+                            <Draggable key={g.id} draggableId={String(g.id)} index={idx}>
+                              {(prov, snapshot) => (
+                                <div
+                                  ref={prov.innerRef}
+                                  {...prov.draggableProps}
+                                  className="card"
+                                  style={{
+                                    ...prov.draggableProps.style,
+                                    padding: '14px 16px',
+                                    opacity: snapshot.isDragging ? 0.85 : 1,
+                                    background: snapshot.isDragging ? 'var(--border)' : undefined,
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                                    <span className="drag-handle" {...prov.dragHandleProps} title="Drag to reprioritize">⠿</span>
+                                    <span style={styles.indexBadge}>{idx + 1}</span>
+                                    <span style={{ flex: 1, fontWeight: 600, fontSize: '0.92rem' }}>{g.name}</span>
+                                    {idx === 0 && (
+                                      <span style={{ fontSize: '0.72rem', color: '#f7b731', background: 'rgba(247,183,49,.12)', padding: '2px 8px', borderRadius: 99 }}>
+                                        #1 Priority
+                                      </span>
+                                    )}
+                                  </div>
 
-                                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                                  <div style={{ flex: 1 }}>
-                                    <label style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                      Target (₹)
-                                    </label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                                      <span style={{ color: 'var(--muted)', fontWeight: 600 }}>₹</span>
-                                      <input
-                                        id={`auto-target-${g.id}`}
-                                        type="number"
-                                        className="input"
-                                        placeholder="0"
-                                        value={targetDraft[g.id] ?? (parseFloat(g.target_amount) || '')}
-                                        onChange={e => setTargetDraft(prev => ({ ...prev, [g.id]: e.target.value }))}
-                                        onBlur={e => handleTargetBlur(g, e.target.value)}
-                                        min={0}
-                                      />
+                                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                      <label style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                        Target (₹)
+                                      </label>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                                        <span style={{ color: 'var(--muted)', fontWeight: 600 }}>₹</span>
+                                        <input
+                                          id={`auto-target-${g.id}`}
+                                          type="number"
+                                          className="input"
+                                          placeholder="e.g. 50000"
+                                          value={draftVal}
+                                          onChange={e => {
+                                            setTargetDraft(prev => ({ ...prev, [g.id]: e.target.value }));
+                                            // Live-clear error when user starts correcting
+                                            if (targetErrors[g.id]) setTargetErrors(prev => ({ ...prev, [g.id]: null }));
+                                          }}
+                                          onBlur={e => handleTargetBlur(g, e.target.value)}
+                                          min={1}
+                                          max={MAX_TARGET}
+                                          style={{ borderColor: fieldErr ? 'var(--danger)' : undefined }}
+                                        />
+                                      </div>
+                                      {fieldErr && <p className="field-error">⚠ {fieldErr}</p>}
+                                    </div>
+                                    <div style={{ textAlign: 'right', minWidth: 90 }}>
+                                      <p style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Allocated</p>
+                                      <p style={{
+                                        fontSize: '1.2rem',
+                                        fontWeight: 700,
+                                        fontFamily: 'Space Grotesk, sans-serif',
+                                        fontVariantNumeric: 'tabular-nums',
+                                        color: g.alloc > 0 ? 'var(--success)' : 'var(--muted)',
+                                        marginTop: 4,
+                                      }}>
+                                        ₹{g.alloc.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                      </p>
                                     </div>
                                   </div>
-                                  <div style={{ textAlign: 'right', minWidth: 90 }}>
-                                    <p style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Allocated</p>
-                                    <p style={{ fontSize: '1.2rem', fontWeight: 700, color: g.alloc > 0 ? 'var(--success)' : 'var(--muted)', marginTop: 4 }}>
-                                      ₹{g.alloc.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                                    </p>
-                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </Draggable>
-                        ))}
+                              )}
+                            </Draggable>
+                          );
+                        })}
                         {provided.placeholder}
                       </div>
                     )}
                   </Droppable>
                 </DragDropContext>
 
+                {/* Allocation integrity check — surface if anything is off */}
+                {totalAutoAllocated > goalAmount && (
+                  <div style={{ background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.35)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', fontSize: '0.84rem', color: 'var(--danger)' }}>
+                    ⚠ Internal constraint violation: allocated (₹{totalAutoAllocated.toLocaleString('en-IN')}) exceeds budget. Please refresh.
+                  </div>
+                )}
+
                 {/* Auto summary */}
-                <div className="card mt-8" style={{ background: 'rgba(108,99,255,.08)', border: '1px solid rgba(108,99,255,.3)' }}>
+                <div className="card mt-8" style={{ background: 'rgba(124,106,246,.08)', border: '1px solid rgba(124,106,246,.25)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--muted)' }}>
                     <span>Total allocated</span>
-                    <span>₹{autoAlloc.reduce((s, g) => s + g.alloc, 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                    <span style={{ color: totalAutoAllocated <= goalAmount ? 'var(--success)' : 'var(--danger)' }}>
+                      ₹{totalAutoAllocated.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    </span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--muted)', marginTop: 6 }}>
                     <span>Unallocated</span>
-                    <span style={{ color: 'var(--accent-3)' }}>
-                      ₹{Math.max(goalAmount - autoAlloc.reduce((s, g) => s + g.alloc, 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    <span style={{ color: 'var(--warning)' }}>
+                      ₹{Math.max(goalAmount - totalAutoAllocated, 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </span>
                   </div>
                   <hr className="divider" style={{ margin: '10px 0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontFamily: 'Space Grotesk, sans-serif' }}>
                     <span>Total Budget</span>
-                    <span style={{ color: 'var(--accent)' }}>₹{goalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                    <span style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>₹{goalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
                   </div>
                 </div>
               </div>
@@ -476,8 +682,8 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border)',
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.06)',
     borderRadius: 10,
     padding: '10px 14px',
   },
@@ -485,7 +691,7 @@ const styles = {
     width: 24,
     height: 24,
     borderRadius: '50%',
-    background: 'var(--accent)',
+    background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
     color: '#fff',
     fontSize: '0.72rem',
     fontWeight: 700,
@@ -511,8 +717,10 @@ const styles = {
     letterSpacing: '0.6px',
   },
   badgeValue: {
-    fontSize: '1.4rem',
-    fontWeight: 700,
+    fontSize: '1.5rem',
+    fontWeight: 800,
+    fontFamily: 'Space Grotesk, sans-serif',
+    fontVariantNumeric: 'tabular-nums',
     color: 'var(--accent)',
   },
 };

@@ -93,12 +93,37 @@ export default function SmartBudgetingPage() {
           <Button id="add-txn-btn" onClick={openAdd}>+ Add</Button>
         </div>
 
-        {/* DSL display */}
-        <div className="dsl-box mb-24">
-          <p className="dsl-label">Dynamic Spend Limit — This Week</p>
-          <p className="dsl-value">₹{dslValue.toLocaleString()}</p>
-          <p className="dsl-sub">Spent ₹{spent.toLocaleString()} · {Math.round((spent / dslValue) * 100)}% used</p>
-        </div>
+        {/* DSL display — signature visual centerpiece */}
+        {(() => {
+          const pct = Math.round((spent / dslValue) * 100);
+          const glowClass = pct >= 90 ? 'danger' : pct >= 65 ? 'warn' : '';
+          const valueColor = pct >= 90
+            ? 'linear-gradient(135deg, #EF4444, #F87171)'
+            : pct >= 65
+            ? 'linear-gradient(135deg, #D97706, #FBBF24)'
+            : 'linear-gradient(135deg, #E4E4EB, #A78BFA)';
+          return (
+            <div className="dsl-box mb-24">
+              <p className="dsl-label">Daily Safe Limit — This Week</p>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
+                <span className={`dsl-glow-ring ${glowClass}`}>
+                  <p className="dsl-value" style={{ background: valueColor, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                    ₹{dslValue.toLocaleString()}
+                  </p>
+                </span>
+              </div>
+              <p className="dsl-sub">Spent ₹{spent.toLocaleString()} · {pct}% used</p>
+              <div className="progress-bar-track" style={{ marginTop: 12, maxWidth: 280, margin: '12px auto 0' }}>
+                <div className="progress-bar-fill" style={{
+                  width: `${Math.min(pct, 100)}%`,
+                  background: pct >= 90 ? 'linear-gradient(90deg, #EF4444, #F87171)'
+                             : pct >= 65 ? 'linear-gradient(90deg, #D97706, #FBBF24)'
+                             : 'linear-gradient(90deg, var(--accent), var(--accent-2))'
+                }} />
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Category selector */}
         <p className="section-label">Weekly Category</p>

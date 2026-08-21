@@ -81,11 +81,11 @@ export default function MajorExpensesPage() {
         <div className="grid-2 mb-24">
           <div className="card">
             <p className="section-label mb-8">Total Spent</p>
-            <p style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--danger)' }}>₹{total.toLocaleString()}</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'Space Grotesk, sans-serif', fontVariantNumeric: 'tabular-nums', background: 'linear-gradient(135deg, #EF4444, #F87171)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>₹{total.toLocaleString()}</p>
           </div>
           <div className="card">
             <p className="section-label mb-8">Total Budget</p>
-            <p style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--success)' }}>₹{budget.toLocaleString()}</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'Space Grotesk, sans-serif', fontVariantNumeric: 'tabular-nums', background: 'linear-gradient(135deg, #16A34A, #4ADE80)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>₹{budget.toLocaleString()}</p>
           </div>
         </div>
 

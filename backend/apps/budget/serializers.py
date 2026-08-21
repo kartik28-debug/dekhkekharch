@@ -174,8 +174,26 @@ class SavingsAllocationSerializer(serializers.Serializer):
 class GoalSerializer(serializers.Serializer):
     """Read/write serializer for Goal."""
     id             = serializers.IntegerField(read_only=True)
-    name           = serializers.CharField(max_length=200)
-    target_amount  = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, min_value=0)
+    name           = serializers.CharField(
+        max_length=100,
+        min_length=2,
+        error_messages={
+            "blank":      "Goal name cannot be blank.",
+            "min_length": "Goal name must be at least 2 characters.",
+            "max_length": "Goal name cannot exceed 100 characters.",
+        },
+    )
+    target_amount  = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        min_value=Decimal("0"),           # 0 is allowed on creation (placeholder)
+        max_value=Decimal("10000000"),    # ₹1 Crore hard cap
+        error_messages={
+            "min_value": "Target amount cannot be negative.",
+            "max_value": "Target amount cannot exceed ₹1,00,00,000.",
+        },
+    )
     current_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0, min_value=0, required=False)
     priority       = serializers.IntegerField(default=0, min_value=0, required=False)
     allocation_mode = serializers.ChoiceField(
@@ -189,10 +207,22 @@ class GoalSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
         default=None,
-        min_value=0,
+        min_value=Decimal("0"),
+        max_value=Decimal("10000000"),
+        error_messages={
+            "min_value": "Manual amount cannot be negative.",
+            "max_value": "Manual amount cannot exceed ₹1,00,00,000.",
+        },
     )
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
+
+    def validate_name(self, value):
+        """Strip leading/trailing whitespace and re-check min length."""
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise serializers.ValidationError("Goal name must be at least 2 non-whitespace characters.")
+        return stripped
 
 
 # ---------------------------------------------------------------------------

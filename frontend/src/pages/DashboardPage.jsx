@@ -164,22 +164,30 @@ export default function DashboardPage() {
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
-      {/* shimmer keyframe injected once */}
+      {/* shimmer keyframe + dashboard-specific styles */}
       <style>{`
         @keyframes shimmer {
           0%   { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
-        .bucket-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin-bottom: 24px; }
+        .bucket-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; margin-bottom: 28px; }
         @media(min-width:600px){ .bucket-grid { grid-template-columns: repeat(4,1fr); } }
-        .bucket-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-        .bucket-card .b-label { font-size:.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.7px; margin-bottom:6px; }
-        .bucket-card .b-value { font-size:1.15rem; font-weight:700; }
-        .bucket-card .b-sub   { font-size:.75rem; color:var(--muted); margin-top:3px; }
-        .apply-note { background: rgba(108,99,255,.12); border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; font-size:.83rem; color: var(--accent); margin-bottom:16px; }
-        .error-note { background: rgba(255,95,95,.1); border: 1px solid var(--danger); border-radius: 10px; padding: 10px 14px; font-size:.83rem; color: var(--danger); margin-bottom:16px; }
+        .bucket-card {
+          background: var(--bg-card);
+          border: 1px solid var(--border-dim);
+          border-radius: var(--radius);
+          padding: 18px 16px;
+          backdrop-filter: blur(16px);
+          transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+        }
+        .bucket-card:hover { transform: translateY(-3px); box-shadow: 0 12px 32px rgba(0,0,0,0.5); border-color: rgba(124,106,246,0.3); }
+        .bucket-card .b-label { font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; margin-bottom:8px; font-family:'Space Grotesk',sans-serif; }
+        .bucket-card .b-value { font-size:1.2rem; font-weight:800; font-family:'Space Grotesk',sans-serif; font-variant-numeric:tabular-nums; }
+        .bucket-card .b-sub   { font-size:.74rem; color:var(--muted); margin-top:4px; }
+        .apply-note { background: rgba(124,106,246,.1); border: 1px solid rgba(124,106,246,.35); border-radius: var(--radius-sm); padding: 11px 16px; font-size:.84rem; color: var(--accent-2); margin-bottom:16px; }
+        .error-note { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.35); border-radius: var(--radius-sm); padding: 11px 16px; font-size:.84rem; color: var(--danger); margin-bottom:16px; }
         .ratio-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:12px; }
-        .ratio-grid label { font-size:.72rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+        .ratio-grid label { font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-family:'Space Grotesk',sans-serif; }
         .ratio-grid input  { width:100%; margin-top:4px; }
       `}</style>
 
@@ -193,10 +201,11 @@ export default function DashboardPage() {
             <h1 className="page-title" style={{ marginBottom: 0 }}>Dashboard</h1>
           </div>
           <div style={{
-            width: 40, height: 40, borderRadius: '50%',
+            width: 42, height: 42, borderRadius: '50%',
             background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: '0.9rem',
+            fontWeight: 700, fontSize: '1rem', fontFamily: 'Space Grotesk, sans-serif',
+            boxShadow: '0 0 20px rgba(124,106,246,0.4)',
           }}>H</div>
         </div>
 
@@ -342,7 +351,7 @@ export default function DashboardPage() {
             {loading ? (
               <Shimmer style={{ height: 28, width: '70%', marginBottom: 6 }} />
             ) : (
-              <p style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--success)' }}>
+              <p style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'Space Grotesk, sans-serif', fontVariantNumeric: 'tabular-nums', background: 'linear-gradient(135deg, #4ADE80, #22C55E)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
                 {hasSalary ? fmt(allocatable) : '₹0'}
               </p>
             )}
@@ -355,7 +364,7 @@ export default function DashboardPage() {
             {loading ? (
               <Shimmer style={{ height: 28, width: '60%', marginBottom: 6 }} />
             ) : (
-              <p style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--accent-3)' }}>
+              <p style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'Space Grotesk, sans-serif', fontVariantNumeric: 'tabular-nums', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
                 {hasSalary ? fmt(dslBalance) : '₹0'}
               </p>
             )}

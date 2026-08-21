@@ -145,12 +145,12 @@ export default function SavingsPage() {
               </div>
             </div>
 
-            <div style={styles.allocBadge('#6c63ff')}>
+            <div style={styles.allocBadge('#7C6AF6')}>
               <span style={styles.badgeLabel}>Goal Amount</span>
               {loading ? (
                 <Shimmer style={{ height: 32, width: 100, marginTop: 4 }} />
               ) : (
-                <span style={styles.badgeValue}>
+                <span style={{ ...styles.badgeValue, background: 'linear-gradient(135deg, #7C6AF6, #A78BFA)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
                   ₹{goalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
               )}
@@ -179,12 +179,12 @@ export default function SavingsPage() {
               Leftover amount after Goal allocation is automatically assigned here.
             </p>
 
-            <div style={styles.allocBadge('#4ecdc4')}>
+            <div style={styles.allocBadge('#4ADE80')}>
               <span style={styles.badgeLabel}>Stocks Amount</span>
               {loading ? (
                 <Shimmer style={{ height: 32, width: 100, marginTop: 4 }} />
               ) : (
-                <span style={{ ...styles.badgeValue, color: '#4ecdc4' }}>
+                <span style={{ ...styles.badgeValue, background: 'linear-gradient(135deg, #16A34A, #4ADE80)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
                   ₹{stockAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
               )}
@@ -260,8 +260,10 @@ const styles = {
     letterSpacing: '0.6px',
   },
   badgeValue: {
-    fontSize: '1.6rem',
-    fontWeight: 700,
+    fontSize: '1.7rem',
+    fontWeight: 800,
+    fontFamily: 'Space Grotesk, sans-serif',
+    fontVariantNumeric: 'tabular-nums',
     color: 'var(--accent)',
   },
 };

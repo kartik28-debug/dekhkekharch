@@ -1,13 +1,13 @@
-"""
+﻿"""
 Budget app test suite.
 
 Tests cover:
-  1. compute_allocation() — ratio math for all 3 modes
-  2. SalarySubmitSerializer — validation edge cases
-  3. POST /api/dashboard/salary/ — happy path + lock enforcement
-  4. GET /api/dashboard/ — empty state + populated state + DSL floor rule
-  5. POST /api/dashboard/lock/ — locking + forward-only behaviour
-  6. transfer_between_buckets() — atomicity, hard floor, DSL soft floor
+  1. compute_allocation() â€” ratio math for all 3 modes
+  2. SalarySubmitSerializer â€” validation edge cases
+  3. POST /api/dashboard/salary/ â€” happy path + lock enforcement
+  4. GET /api/dashboard/ â€” empty state + populated state + DSL floor rule
+  5. POST /api/dashboard/lock/ â€” locking + forward-only behaviour
+  6. transfer_between_buckets() â€” atomicity, hard floor, DSL soft floor
 """
 
 from decimal import Decimal
@@ -50,14 +50,14 @@ class ComputeAllocationTests(TestCase):
         self.assertEqual(result["major"], Decimal("50000.00"))
         self.assertEqual(result["dsl"], Decimal("15000.00"))
         self.assertEqual(result["savings"], Decimal("25000.00"))
-        self.assertEqual(result["emergency"], Decimal("10000.00"))
+        self.assertEqual(result["buffer_reserve"], Decimal("10000.00"))
 
     def test_balanced_ratios(self):
         result = compute_allocation(Decimal("100000"), "balanced")
         self.assertEqual(result["major"], Decimal("50000.00"))
         self.assertEqual(result["dsl"], Decimal("25000.00"))
         self.assertEqual(result["savings"], Decimal("15000.00"))
-        self.assertEqual(result["emergency"], Decimal("10000.00"))
+        self.assertEqual(result["buffer_reserve"], Decimal("10000.00"))
 
     def test_amounts_sum_to_salary(self):
         """The 4 bucket amounts must ALWAYS sum exactly to salary (rounding guard)."""
@@ -76,7 +76,7 @@ class ComputeAllocationTests(TestCase):
             "major": Decimal("40"),
             "dsl": Decimal("30"),
             "savings": Decimal("20"),
-            "emergency": Decimal("10"),
+            "buffer_reserve": Decimal("10"),
         }
         result = compute_allocation(Decimal("100000"), "custom", ratios)
         self.assertEqual(result["major"], Decimal("40000.00"))
@@ -87,7 +87,7 @@ class ComputeAllocationTests(TestCase):
             "major": Decimal("40"),
             "dsl": Decimal("30"),
             "savings": Decimal("20"),
-            "emergency": Decimal("5"),   # sum = 95, not 100
+            "buffer_reserve": Decimal("5"),   # sum = 95, not 100
         }
         with self.assertRaises(ValueError, msg="Should reject ratios that don't sum to 100"):
             compute_allocation(Decimal("100000"), "custom", ratios)
@@ -169,7 +169,7 @@ class DashboardAPITests(TestCase):
         self.assertFalse(data["has_allocation"])
         self.assertIsNone(data["salary"])
         # All bucket balances should be 0.00
-        for bucket in ("major", "dsl", "savings", "emergency"):
+        for bucket in ("major", "dsl", "savings", "buffer_reserve"):
             self.assertEqual(
                 Decimal(data["buckets"][bucket]["balance"]),
                 Decimal("0"),
@@ -190,7 +190,7 @@ class DashboardAPITests(TestCase):
         self.assertEqual(Decimal(data["buckets"]["major"]["balance"]), Decimal("26000.00"))
         self.assertEqual(Decimal(data["buckets"]["dsl"]["balance"]), Decimal("7800.00"))
         self.assertEqual(Decimal(data["buckets"]["savings"]["balance"]), Decimal("13000.00"))
-        self.assertEqual(Decimal(data["buckets"]["emergency"]["balance"]), Decimal("5200.00"))
+        self.assertEqual(Decimal(data["buckets"]["buffer_reserve"]["balance"]), Decimal("5200.00"))
 
     def test_post_salary_validation_error(self):
         resp = self.client.post(
@@ -242,7 +242,7 @@ class DashboardAPITests(TestCase):
         )
         self.client.post(reverse("dashboard-lock"))
 
-        # 2. Update salary — should go to next month
+        # 2. Update salary â€” should go to next month
         resp = self.client.post(
             reverse("dashboard-salary"),
             {"salary": "60000", "mode": "balanced"},
@@ -317,23 +317,23 @@ class TransferBetweenBucketsTests(TestCase):
         ).current_balance
 
     def test_transfer_deducts_and_credits(self):
-        # Move ₹5000 from savings to emergency
+        # Move â‚¹5000 from savings to emergency
         transfer_between_buckets(
             user=self.user,
             from_bucket_type="savings",
-            to_bucket_type="emergency",
+            to_bucket_type="buffer_reserve",
             amount=Decimal("5000"),
             reason="test transfer",
             allocation=self.allocation,
         )
         self.assertEqual(self._balance("savings"), Decimal("10000.00"))  # 15000 - 5000
-        self.assertEqual(self._balance("emergency"), Decimal("15000.00"))  # 10000 + 5000
+        self.assertEqual(self._balance("buffer_reserve"), Decimal("15000.00"))  # 10000 + 5000
 
     def test_audit_log_created(self):
         transfer_between_buckets(
             user=self.user,
             from_bucket_type="savings",
-            to_bucket_type="emergency",
+            to_bucket_type="buffer_reserve",
             amount=Decimal("1000"),
             reason="audit test",
             allocation=self.allocation,
@@ -341,7 +341,7 @@ class TransferBetweenBucketsTests(TestCase):
         log = BucketTransaction.objects.filter(
             user=self.user,
             source_bucket="savings",
-            destination_bucket="emergency",
+            destination_bucket="buffer_reserve",
         ).first()
         self.assertIsNotNone(log)
         self.assertEqual(log.amount, Decimal("1000"))
@@ -351,7 +351,7 @@ class TransferBetweenBucketsTests(TestCase):
         with self.assertRaises(InsufficientFundsError):
             transfer_between_buckets(
                 user=self.user,
-                from_bucket_type="emergency",
+                from_bucket_type="buffer_reserve",
                 to_bucket_type="savings",
                 amount=Decimal("999999"),  # way more than balance
                 reason="should fail",
@@ -364,7 +364,7 @@ class TransferBetweenBucketsTests(TestCase):
         must roll back (no money disappears).
         """
         savings_before = self._balance("savings")
-        emergency_before = self._balance("emergency")
+        emergency_before = self._balance("buffer_reserve")
 
         with self.assertRaises(Exception):
             with patch(
@@ -374,7 +374,7 @@ class TransferBetweenBucketsTests(TestCase):
                 transfer_between_buckets(
                     user=self.user,
                     from_bucket_type="savings",
-                    to_bucket_type="emergency",
+                    to_bucket_type="buffer_reserve",
                     amount=Decimal("1000"),
                     reason="atomicity test",
                     allocation=self.allocation,
@@ -382,17 +382,121 @@ class TransferBetweenBucketsTests(TestCase):
 
         # Balances should be unchanged after rollback
         self.assertEqual(self._balance("savings"), savings_before)
-        self.assertEqual(self._balance("emergency"), emergency_before)
+        self.assertEqual(self._balance("buffer_reserve"), emergency_before)
 
     def test_dsl_soft_floor_allows_negative_internally(self):
         """DSL can go negative (overspend); that's caught by the view layer."""
         transfer_between_buckets(
             user=self.user,
             from_bucket_type="dsl",
-            to_bucket_type="emergency",
+            to_bucket_type="buffer_reserve",
             amount=Decimal("999999"),  # far exceeds DSL balance
             reason="dsl overspend test",
             allocation=self.allocation,
         )
         dsl_balance = self._balance("dsl")
         self.assertLess(dsl_balance, Decimal("0"))
+
+
+# ---------------------------------------------------------------------------
+# 7. GoalSerializer — input validation edge cases
+# ---------------------------------------------------------------------------
+
+from apps.budget.serializers import GoalSerializer   # noqa: E402
+
+
+class GoalSerializerValidationTests(TestCase):
+    """
+    Ensures GoalSerializer rejects all invalid inputs described in the spec:
+      - Negative target_amount
+      - Malformed / non-numeric strings (DRF DecimalField rejects these)
+      - Excessively large target_amount (> 1 Crore)
+      - Blank / whitespace-only name
+      - Name shorter than 2 characters
+      - Valid edge cases that must be ACCEPTED
+    """
+
+    BASE = {
+        'name': 'Vacation Goa',
+        'target_amount': '50000',
+        'priority': 0,
+        'allocation_mode': 'manual',
+    }
+
+    def _ser(self, overrides):
+        data = {**self.BASE, **overrides}
+        return GoalSerializer(data=data)
+
+    # Name validation
+    def test_name_blank_rejected(self):
+        s = self._ser({'name': ''})
+        self.assertFalse(s.is_valid())
+        self.assertIn('name', s.errors)
+
+    def test_name_whitespace_only_rejected(self):
+        s = self._ser({'name': '   '})
+        self.assertFalse(s.is_valid())
+        self.assertIn('name', s.errors)
+
+    def test_name_single_char_rejected(self):
+        s = self._ser({'name': 'A'})
+        self.assertFalse(s.is_valid())
+        self.assertIn('name', s.errors)
+
+    def test_name_two_chars_accepted(self):
+        s = self._ser({'name': 'Go'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_name_leading_trailing_whitespace_stripped(self):
+        s = self._ser({'name': '  Holiday  '})
+        self.assertTrue(s.is_valid(), s.errors)
+        self.assertEqual(s.validated_data['name'], 'Holiday')
+
+    def test_name_over_100_chars_rejected(self):
+        s = self._ser({'name': 'A' * 101})
+        self.assertFalse(s.is_valid())
+        self.assertIn('name', s.errors)
+
+    # Target amount validation
+    def test_target_negative_rejected(self):
+        s = self._ser({'target_amount': '-1'})
+        self.assertFalse(s.is_valid())
+        self.assertIn('target_amount', s.errors)
+
+    def test_target_zero_accepted_on_creation(self):
+        s = self._ser({'target_amount': '0'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_target_over_cap_rejected(self):
+        s = self._ser({'target_amount': '10000001'})
+        self.assertFalse(s.is_valid())
+        self.assertIn('target_amount', s.errors)
+
+    def test_target_exactly_at_cap_accepted(self):
+        s = self._ser({'target_amount': '10000000'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_target_non_numeric_string_rejected(self):
+        s = self._ser({'target_amount': '542-25245'})
+        self.assertFalse(s.is_valid())
+        self.assertIn('target_amount', s.errors)
+
+    def test_target_alphanumeric_rejected(self):
+        s = self._ser({'target_amount': 'abc'})
+        self.assertFalse(s.is_valid())
+        self.assertIn('target_amount', s.errors)
+
+    def test_target_empty_string_rejected(self):
+        s = self._ser({'target_amount': ''})
+        self.assertFalse(s.is_valid())
+        self.assertIn('target_amount', s.errors)
+
+    def test_valid_goal_accepted(self):
+        s = self._ser({})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_valid_goal_with_decimal_target_accepted(self):
+        s = self._ser({'target_amount': '75000.50'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+
