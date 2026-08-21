@@ -1,53 +1,121 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import NavBar from '../components/NavBar';
+import { getDashboard } from '../api/dashboard';
+import { getBufferReserve, withdrawBufferReserve, depositBufferReserve } from '../api/bufferReserve';
+import { getSavingsAllocation, putSavingsAllocation } from '../api/savings';
 
-const INITIAL_CATEGORIES = [
-  { id: 'food', name: 'Food', icon: '🍔' },
-  { id: 'entertainment', name: 'Entertainment', icon: '🎬' },
-  { id: 'travel', name: 'Travel', icon: '🚗' },
-  { id: 'shopping', name: 'Shopping', icon: '🛍️' },
-  { id: 'bills', name: 'Bills', icon: '💡' },
-  { id: 'others', name: 'Others', icon: '📦' },
-];
-
-const INITIAL_EXPENSES = [
-  {
-    id: 'tx-1',
-    amount: 450,
-    category: 'Food',
-    date: new Date().toISOString().split('T')[0],
-    description: 'Zomato Lunch Order',
-    icon: '🍔',
-  },
-  {
-    id: 'tx-2',
-    amount: 280,
-    category: 'Travel',
-    date: new Date().toISOString().split('T')[0],
-    description: 'Uber Ride',
-    icon: '🚗',
-  },
+const DEFAULT_CATEGORIES = [
+  { id: 'food', name: 'Food', icon: '🍔', ratio: 0.35 },
+  { id: 'entertainment', name: 'Entertainment', icon: '🎬', ratio: 0.20 },
+  { id: 'travel', name: 'Travel', icon: '🚗', ratio: 0.20 },
+  { id: 'shopping', name: 'Shopping', icon: '🛍️', ratio: 0.15 },
+  { id: 'bills', name: 'Bills', icon: '💡', ratio: 0.10 },
+  { id: 'others', name: 'Others', icon: '📦', ratio: 0.00 },
 ];
 
 export default function SmartBudgetingPage() {
-  // ── Form State ──────────────────────────────────────────────────────────
+  // ── Core Budget & Weekly State ──────────────────────────────────────────
+  const [monthlyPool, setMonthlyPool] = useState(10000);
+  const [currentWeek, setCurrentWeek] = useState(1);
+  const [totalWeeks] = useState(4);
+  const [activeWSL, setActiveWSL] = useState(2500); // Baseline W / 4
+  const [remainingPool, setRemainingPool] = useState(10000);
+
+  // Cross-Page Balances
+  const [bufferReserveBalance, setBufferReserveBalance] = useState(5000);
+  const [savingsPoolBalance, setSavingsPoolBalance] = useState(15000);
+
+  // Form State
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
 
-  // ── Category System State ───────────────────────────────────────────────
-  const [categories, setCategories] = useState(INITIAL_CATEGORIES);
+  // Category System
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [selectedCategory, setSelectedCategory] = useState('Food');
   const [isAddingCustom, setIsAddingCustom] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customEmoji, setCustomEmoji] = useState('✨');
 
-  // ── Transaction History State ───────────────────────────────────────────
-  const [expensesList, setExpensesList] = useState(INITIAL_EXPENSES);
+  // Transactions History State (Current Active Week)
+  const [expensesList, setExpensesList] = useState([
+    {
+      id: 'tx-101',
+      amount: 450,
+      category: 'Food',
+      date: new Date().toISOString().split('T')[0],
+      description: 'Lunch Bowl',
+      icon: '🍔',
+    },
+    {
+      id: 'tx-102',
+      amount: 300,
+      category: 'Travel',
+      date: new Date().toISOString().split('T')[0],
+      description: 'Cab to Work',
+      icon: '🚗',
+    },
+  ]);
 
-  // ── Feedback & Output State ─────────────────────────────────────────────
-  const [successMessage, setSuccessMessage] = useState(null);
+  // Settlement & Modal State
+  const [settleModalOpen, setSettleModalOpen] = useState(false);
+  const [settlementType, setSettlementType] = useState(null); // 'overspend' | 'underspent'
+  const [settlementAmount, setSettlementAmount] = useState(0);
+  const [settleNotice, setSettleNotice] = useState(null);
   const [formError, setFormError] = useState(null);
+  const [successToast, setSuccessToast] = useState(null);
+
+  // ── Initial Fetch & Cross-Page State Sync ────────────────────────────────
+  const loadInitialData = useCallback(async () => {
+    try {
+      const [dashData, bufferData, savingsData] = await Promise.all([
+        getDashboard().catch(() => ({})),
+        getBufferReserve().catch(() => ({})),
+        getSavingsAllocation().catch(() => ({})),
+      ]);
+
+      // Monthly Wants Pool (DSL Bucket balance or allocated amount)
+      const dslVal = parseFloat(dashData?.buckets?.dsl?.allocated ?? 10000);
+      const wantsPool = isNaN(dslVal) || dslVal <= 0 ? 10000 : dslVal;
+      setMonthlyPool(wantsPool);
+
+      const baseline = Math.round(wantsPool / 4);
+      setActiveWSL(baseline);
+      setRemainingPool(wantsPool);
+
+      // Buffer Reserve Balance
+      const rawBuf = parseFloat(bufferData?.current_balance || bufferData?.balance || 5000);
+      setBufferReserveBalance(isNaN(rawBuf) ? 5000 : rawBuf);
+
+      // Savings Goal Pool Balance
+      const rawSav = parseFloat(savingsData?.goal_amount ?? 15000);
+      setSavingsPoolBalance(isNaN(rawSav) ? 15000 : rawSav);
+    } catch (err) {
+      console.error('Error fetching initial data for Smart Budgeting:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // ── Derived Weekly Calculations ──────────────────────────────────────────
+  const weeklySpentSum = expensesList.reduce((sum, item) => sum + (item.amount || 0), 0);
+  const remainingAllowance = activeWSL - weeklySpentSum;
+  const spentPercentage = activeWSL > 0 ? Math.min(100, Math.round((weeklySpentSum / activeWSL) * 100)) : 0;
+
+  // Category Budgets breakdown based on activeWSL
+  const getCategoryBudget = (catName) => {
+    const cat = categories.find((c) => c.name === catName);
+    const ratio = cat?.ratio ?? 0.15;
+    return Math.round(activeWSL * ratio);
+  };
+
+  const getCategorySpent = (catName) => {
+    return expensesList
+      .filter((item) => item.category === catName)
+      .reduce((sum, item) => sum + item.amount, 0);
+  };
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleAddCustomCategory = (e) => {
@@ -61,6 +129,7 @@ export default function SmartBudgetingPage() {
         id: `custom-${Date.now()}`,
         name: trimmed,
         icon: customEmoji || '✨',
+        ratio: 0.10,
       };
       setCategories((prev) => [...prev, newCat]);
       setSelectedCategory(trimmed);
@@ -72,10 +141,10 @@ export default function SmartBudgetingPage() {
     setIsAddingCustom(false);
   };
 
-  const handleSubmit = (e) => {
+  const handleLogExpense = (e) => {
     e.preventDefault();
     setFormError(null);
-    setSuccessMessage(null);
+    setSuccessToast(null);
 
     const parsedAmount = parseFloat(amount);
     if (!parsedAmount || parsedAmount <= 0) {
@@ -88,12 +157,10 @@ export default function SmartBudgetingPage() {
       return;
     }
 
-    // Find category icon
     const categoryObj = categories.find((c) => c.name === selectedCategory);
     const categoryIcon = categoryObj ? categoryObj.icon : '💸';
 
-    // Construct new transaction entry
-    const newTransaction = {
+    const newTx = {
       id: `tx-${Date.now()}`,
       amount: parsedAmount,
       category: selectedCategory,
@@ -102,19 +169,13 @@ export default function SmartBudgetingPage() {
       icon: categoryIcon,
     };
 
-    // Update Transaction History State (prepend to top)
-    setExpensesList((prev) => [newTransaction, ...prev]);
-
-    // Show temporary success feedback toast
-    setSuccessMessage(`Logged ₹${parsedAmount.toLocaleString('en-IN')} for ${selectedCategory}`);
-
-    // Reset form inputs
+    setExpensesList((prev) => [newTx, ...prev]);
+    setSuccessToast(`Logged ₹${parsedAmount.toLocaleString('en-IN')} for ${selectedCategory}`);
     setAmount('');
     setDescription('');
 
-    // Clear success message after 4 seconds
     setTimeout(() => {
-      setSuccessMessage(null);
+      setSuccessToast(null);
     }, 4000);
   };
 
@@ -122,12 +183,143 @@ export default function SmartBudgetingPage() {
     setExpensesList((prev) => prev.filter((item) => item.id !== id));
   };
 
+  // ── End Week Trigger ──────────────────────────────────────────────────────
+  const handleTriggerEndWeek = () => {
+    if (weeklySpentSum > activeWSL) {
+      // Overspent
+      const deficit = weeklySpentSum - activeWSL;
+      setSettlementType('overspend');
+      setSettlementAmount(deficit);
+      setSettleModalOpen(true);
+    } else {
+      // Underspent / Surplus
+      const surplus = activeWSL - weeklySpentSum;
+      setSettlementType('underspent');
+      setSettlementAmount(surplus);
+      setSettleModalOpen(true);
+    }
+  };
+
+  // ── Overspend Option 1: Deduct from Buffer Reserve ────────────────────────
+  const handleOverspendBufferDeduct = async () => {
+    const deficit = settlementAmount;
+
+    if (bufferReserveBalance >= deficit) {
+      // Deduct from Buffer Reserve
+      const newBufferBal = bufferReserveBalance - deficit;
+      setBufferReserveBalance(newBufferBal);
+
+      try {
+        await withdrawBufferReserve(
+          deficit,
+          `Overspend Cover (Week ${currentWeek})`,
+          'overspend_cover'
+        );
+      } catch (err) {
+        console.error('Failed to log buffer withdrawal:', err);
+      }
+
+      setSettleNotice(`✅ ₹${deficit.toLocaleString('en-IN')} covered via Buffer Reserve!`);
+    } else {
+      // Fallback: Buffer Reserve insufficient → Deduct remainder from Savings Goal Pool
+      const coveredByBuffer = bufferReserveBalance;
+      const fallbackDeficit = deficit - coveredByBuffer;
+
+      setBufferReserveBalance(0);
+      const newSavingsPool = Math.max(0, savingsPoolBalance - fallbackDeficit);
+      setSavingsPoolBalance(newSavingsPool);
+
+      try {
+        if (coveredByBuffer > 0) {
+          await withdrawBufferReserve(coveredByBuffer, `Overspend Cover (Week ${currentWeek})`, 'overspend_cover');
+        }
+        await putSavingsAllocation({ goal_amount: newSavingsPool });
+      } catch (err) {
+        console.error('Fallback savings update failed:', err);
+      }
+
+      setSettleNotice(
+        `⚠️ Buffer Reserve covered ₹${coveredByBuffer.toLocaleString('en-IN')}. Remaining ₹${fallbackDeficit.toLocaleString('en-IN')} deducted from Savings Goal Pool!`
+      );
+    }
+
+    advanceToNextWeek(activeWSL);
+  };
+
+  // ── Overspend Option 2: Reduce Future Weekly Limits ────────────────────────
+  const handleOverspendReduceFuture = () => {
+    const remainingWeeks = totalWeeks - currentWeek;
+    if (remainingWeeks > 0) {
+      const newRemainingPool = Math.max(0, remainingPool - weeklySpentSum);
+      const newLimit = Math.round(newRemainingPool / remainingWeeks);
+      setRemainingPool(newRemainingPool);
+      setActiveWSL(newLimit);
+      setSettleNotice(`📉 Future weekly limits reduced to ₹${newLimit.toLocaleString('en-IN')}/week.`);
+    } else {
+      setSettleNotice(`Final week settled.`);
+    }
+
+    advanceToNextWeek();
+  };
+
+  // ── Underspent Option 1: Send Surplus to Savings (Goal Pool) ───────────────
+  const handleUnderspentSendToSavings = async () => {
+    const surplus = settlementAmount;
+    const newSavingsPool = savingsPoolBalance + surplus;
+    setSavingsPoolBalance(newSavingsPool);
+
+    try {
+      await putSavingsAllocation({ goal_amount: newSavingsPool });
+    } catch (err) {
+      console.error('Failed to send surplus to savings:', err);
+    }
+
+    setSettleNotice(`💎 Surplus of ₹${surplus.toLocaleString('en-IN')} transferred to Savings Goal Pool!`);
+    // Reset next week's allowance to baseline
+    const baseline = Math.round(monthlyPool / 4);
+    setActiveWSL(baseline);
+    advanceToNextWeek(baseline);
+  };
+
+  // ── Underspent Option 2: Increase Future Weekly Limits ─────────────────────
+  const handleUnderspentIncreaseFuture = () => {
+    const remainingWeeks = totalWeeks - currentWeek;
+    if (remainingWeeks > 0) {
+      const newRemainingPool = Math.max(0, remainingPool - weeklySpentSum);
+      const newLimit = Math.round(newRemainingPool / remainingWeeks);
+      setRemainingPool(newRemainingPool);
+      setActiveWSL(newLimit);
+      setSettleNotice(`📈 Surplus redistributed! Future weekly limits increased to ₹${newLimit.toLocaleString('en-IN')}/week.`);
+    } else {
+      setSettleNotice(`Final week settled with surplus!`);
+    }
+
+    advanceToNextWeek();
+  };
+
+  // ── Advance Week Helper ────────────────────────────────────────────────────
+  const advanceToNextWeek = (nextLimitOverride) => {
+    if (currentWeek < totalWeeks) {
+      setCurrentWeek((prev) => prev + 1);
+    }
+    setExpensesList([]); // Clear active week's transactions
+    setSettleModalOpen(false);
+
+    if (nextLimitOverride) {
+      setActiveWSL(nextLimitOverride);
+    }
+
+    setTimeout(() => {
+      setSettleNotice(null);
+    }, 5000);
+  };
+
   return (
     <div className="layout">
-      {/* ── Custom Glassmorphism & Micro-Animation Styles ── */}
+      {/* ── Custom Dark Glassmorphism Styles ── */}
       <style>{`
         .sb-container {
-          max-width: 720px;
+          max-width: 820px;
           margin: 0 auto;
           padding: 0 16px 120px;
         }
@@ -138,14 +330,46 @@ export default function SmartBudgetingPage() {
           -webkit-backdrop-filter: blur(20px);
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 20px;
-          padding: 32px 28px;
+          padding: 28px;
           box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
 
-        .glass-card:hover {
+        .hero-metric-card {
+          background: linear-gradient(135deg, rgba(124, 106, 246, 0.15) 0%, rgba(56, 189, 248, 0.08) 100%);
+          border: 1px solid rgba(124, 106, 246, 0.3);
+          border-radius: 20px;
+          padding: 28px;
+          margin-bottom: 28px;
+          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .metric-value-huge {
+          font-size: 2.8rem;
+          font-weight: 800;
+          font-family: 'Space Grotesk', sans-serif;
+          font-variant-numeric: tabular-nums;
+          letter-spacing: -0.5px;
+        }
+
+        .category-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 16px;
+        }
+
+        .category-card {
+          background: rgba(26, 26, 38, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 16px;
+          padding: 18px;
+          transition: all 0.25s ease;
+        }
+
+        .category-card:hover {
           border-color: rgba(124, 106, 246, 0.3);
-          box-shadow: 0 24px 60px rgba(124, 106, 246, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+          transform: translateY(-2px);
+          box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
         }
 
         .category-chip {
@@ -161,14 +385,6 @@ export default function SmartBudgetingPage() {
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          user-select: none;
-        }
-
-        .category-chip:hover {
-          background: rgba(124, 106, 246, 0.1);
-          border-color: rgba(124, 106, 246, 0.3);
-          color: #F8FAFC;
-          transform: translateY(-2px);
         }
 
         .category-chip.active {
@@ -182,12 +398,7 @@ export default function SmartBudgetingPage() {
         .category-chip-add {
           border-style: dashed;
           background: rgba(124, 106, 246, 0.05);
-          color: var(--accent-2, #A855F7);
-        }
-
-        .category-chip-add:hover {
-          background: rgba(124, 106, 246, 0.18);
-          border-color: var(--accent-2, #A855F7);
+          color: #A855F7;
         }
 
         .currency-input-wrapper {
@@ -222,29 +433,6 @@ export default function SmartBudgetingPage() {
         .currency-input:focus {
           border-color: #7C6AF6;
           box-shadow: 0 0 24px rgba(124, 106, 246, 0.25);
-          background: rgba(15, 15, 23, 0.95);
-        }
-
-        .currency-input::placeholder {
-          color: #475569;
-          font-weight: 500;
-        }
-
-        .custom-cat-input-group {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-top: 12px;
-          padding: 12px;
-          background: rgba(15, 15, 23, 0.6);
-          border: 1px solid rgba(124, 106, 246, 0.3);
-          border-radius: 12px;
-          animation: fadeIn 0.2s ease-in-out;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-4px); }
-          to { opacity: 1; transform: translateY(0); }
         }
 
         .submit-btn {
@@ -264,60 +452,75 @@ export default function SmartBudgetingPage() {
         .submit-btn:hover {
           transform: translateY(-2px);
           box-shadow: 0 14px 36px rgba(124, 106, 246, 0.5);
-          filter: brightness(1.08);
         }
 
-        .toast-success {
-          margin-top: 20px;
-          padding: 14px 18px;
-          background: rgba(52, 211, 153, 0.12);
-          border: 1px solid rgba(52, 211, 153, 0.3);
-          border-radius: 12px;
-          color: #34D399;
-          font-size: 0.88rem;
-          font-weight: 600;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          animation: fadeIn 0.3s ease;
+        .progress-bar-bg {
+          width: 100%;
+          height: 8px;
+          background: rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          overflow: hidden;
+        }
+
+        .progress-bar-fill-gradient {
+          height: 100%;
+          border-radius: 6px;
+          transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .tx-card-item {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 16px;
+          padding: 14px 16px;
           background: rgba(26, 26, 38, 0.6);
           border: 1px solid rgba(255, 255, 255, 0.06);
           border-radius: 14px;
           margin-bottom: 10px;
-          transition: all 0.2s ease;
         }
 
-        .tx-card-item:hover {
-          background: rgba(30, 30, 45, 0.8);
-          border-color: rgba(124, 106, 246, 0.25);
-          transform: translateX(2px);
-        }
-
-        .tx-icon-badge {
-          width: 42px;
-          height: 42px;
-          border-radius: 12px;
-          background: rgba(124, 106, 246, 0.12);
-          border: 1px solid rgba(124, 106, 246, 0.25);
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.75);
+          backdrop-filter: blur(12px);
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 1.25rem;
-          flex-shrink: 0;
+          z-index: 999;
+          padding: 20px;
         }
 
-        .tx-amount-neg {
-          font-size: 1.05rem;
-          font-weight: 700;
-          font-family: 'Space Grotesk', sans-serif;
-          color: #F87171;
+        .modal-content {
+          background: rgba(20, 20, 31, 0.95);
+          border: 1px solid rgba(124, 106, 246, 0.4);
+          border-radius: 24px;
+          padding: 32px;
+          max-width: 520px;
+          width: 100%;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+          animation: modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes modalFadeIn {
+          from { opacity: 0; transform: scale(0.95) translateY(10px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .option-choice-card {
+          padding: 18px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          margin-bottom: 14px;
+          cursor: pointer;
+          transition: all 0.25s ease;
+        }
+
+        .option-choice-card:hover {
+          background: rgba(124, 106, 246, 0.15);
+          border-color: #7C6AF6;
+          transform: translateY(-2px);
         }
 
         .section-label-glow {
@@ -336,17 +539,219 @@ export default function SmartBudgetingPage() {
       <div className="page">
         <div className="sb-container">
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <h1 className="page-title" style={{ marginBottom: 8 }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <h1 className="page-title" style={{ marginBottom: 6 }}>
               Smart Budgeting
             </h1>
             <p className="text-muted" style={{ fontSize: '0.92rem' }}>
-              Track daily expenses with real-time recalculating spending limits
+              Dynamic Weekly Tracker with Automated Buffer Reserve & Savings Integration
             </p>
           </div>
 
+          {/* Settle Notice Banner */}
+          {settleNotice && (
+            <div
+              style={{
+                background: 'rgba(52, 211, 153, 0.12)',
+                border: '1px solid rgba(52, 211, 153, 0.3)',
+                color: '#34D399',
+                padding: '14px 20px',
+                borderRadius: 16,
+                marginBottom: 24,
+                fontSize: '0.9rem',
+                fontWeight: 600,
+                textAlign: 'center',
+              }}
+            >
+              {settleNotice}
+            </div>
+          )}
+
           {/* ─────────────────────────────────────────────────────────────
-              LOG EXPENSE SECTION
+              1. HERO WEEKLY METRIC BAR
+             ───────────────────────────────────────────────────────────── */}
+          <div className="hero-metric-card">
+            <div className="flex justify-between items-center flex-wrap mb-16" style={{ gap: 12 }}>
+              <div>
+                <span className="section-label-glow" style={{ color: '#A78BFA', margin: 0 }}>
+                  WEEKLY SPEND LIMIT (WSL)
+                </span>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '2px 0 0', color: '#F8FAFC' }}>
+                  Week {currentWeek} of {totalWeeks}
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ padding: '10px 20px', fontSize: '0.88rem', fontWeight: 700 }}
+                onClick={handleTriggerEndWeek}
+              >
+                ⚡ End Week {currentWeek} & Settle
+              </button>
+            </div>
+
+            {/* Huge Metrics Grid */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 20,
+                marginBottom: 20,
+              }}
+            >
+              <div>
+                <span className="text-muted" style={{ fontSize: '0.78rem' }}>
+                  Active Weekly Limit
+                </span>
+                <div className="metric-value-huge" style={{ color: '#F8FAFC' }}>
+                  ₹{activeWSL.toLocaleString('en-IN')}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted" style={{ fontSize: '0.78rem' }}>
+                  Total Spent This Week ($X$)
+                </span>
+                <div
+                  className="metric-value-huge"
+                  style={{
+                    color: weeklySpentSum > activeWSL ? '#F87171' : '#F8FAFC',
+                  }}
+                >
+                  ₹{weeklySpentSum.toLocaleString('en-IN')}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-muted" style={{ fontSize: '0.78rem' }}>
+                  Remaining Allowance
+                </span>
+                <div
+                  className="metric-value-huge"
+                  style={{
+                    color: remainingAllowance < 0 ? '#F87171' : '#34D399',
+                  }}
+                >
+                  ₹{remainingAllowance.toLocaleString('en-IN')}
+                </div>
+              </div>
+            </div>
+
+            {/* Overall Weekly Progress Bar */}
+            <div className="progress-bar-bg" style={{ height: 10 }}>
+              <div
+                className="progress-bar-fill-gradient"
+                style={{
+                  width: `${spentPercentage}%`,
+                  background:
+                    spentPercentage >= 90
+                      ? 'linear-gradient(90deg, #EF4444, #F87171)'
+                      : spentPercentage >= 70
+                      ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
+                      : 'linear-gradient(90deg, #7C6AF6, #34D399)',
+                }}
+              />
+            </div>
+
+            <div className="flex justify-between items-center mt-8 text-muted" style={{ fontSize: '0.78rem' }}>
+              <span>Spent {spentPercentage}% of Weekly Limit</span>
+              <span>Buffer Reserve Available: ₹{bufferReserveBalance.toLocaleString('en-IN')}</span>
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────
+              2. PER-CATEGORY PROGRESS BREAKDOWN
+             ───────────────────────────────────────────────────────────── */}
+          <div className="glass-card mb-32">
+            <div className="flex justify-between items-center mb-20">
+              <div>
+                <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, color: '#F8FAFC' }}>
+                  📊 Category Budgets & Spending
+                </h2>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                  Real-time budget allocation breakdown for Week {currentWeek}
+                </span>
+              </div>
+            </div>
+
+            <div className="category-grid">
+              {categories.map((cat) => {
+                const budget = getCategoryBudget(cat.name);
+                const spent = getCategorySpent(cat.name);
+                const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+                const isOver = spent > budget && budget > 0;
+                const isNear = pct >= 70 && !isOver;
+
+                return (
+                  <div key={cat.id} className="category-card">
+                    <div className="flex justify-between items-center mb-8">
+                      <div className="flex items-center" style={{ gap: 8 }}>
+                        <span style={{ fontSize: '1.2rem' }}>{cat.icon}</span>
+                        <span style={{ fontWeight: 600, fontSize: '0.92rem', color: '#F8FAFC' }}>
+                          {cat.name}
+                        </span>
+                      </div>
+
+                      {isOver ? (
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            color: '#F87171',
+                            background: 'rgba(248, 113, 113, 0.15)',
+                            padding: '2px 6px',
+                            borderRadius: 6,
+                          }}
+                        >
+                          🚨 Exceeded
+                        </span>
+                      ) : isNear ? (
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            color: '#FBBF24',
+                            background: 'rgba(245, 158, 11, 0.15)',
+                            padding: '2px 6px',
+                            borderRadius: 6,
+                          }}
+                        >
+                          ⚠️ Near Limit
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="flex justify-between items-center mb-6" style={{ fontSize: '0.82rem' }}>
+                      <span style={{ color: isOver ? '#F87171' : '#F8FAFC', fontWeight: 700 }}>
+                        ₹{spent.toLocaleString('en-IN')}
+                      </span>
+                      <span className="text-muted">
+                        of ₹{budget.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="progress-bar-bg">
+                      <div
+                        className="progress-bar-fill-gradient"
+                        style={{
+                          width: `${pct}%`,
+                          background: isOver
+                            ? '#EF4444'
+                            : isNear
+                            ? '#F59E0B'
+                            : 'linear-gradient(90deg, #7C6AF6, #38BDF8)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────
+              3. LOG EXPENSE FORM SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card mb-32">
             <div className="flex items-center justify-between mb-24">
@@ -355,7 +760,7 @@ export default function SmartBudgetingPage() {
                   💸 Log Expense
                 </h2>
                 <span className="text-muted" style={{ fontSize: '0.8rem' }}>
-                  Record a transaction to update your daily spend limit
+                  Record transactions to update weekly progress in real-time
                 </span>
               </div>
             </div>
@@ -376,8 +781,8 @@ export default function SmartBudgetingPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit}>
-              {/* 1. Amount Field */}
+            <form onSubmit={handleLogExpense}>
+              {/* Amount */}
               <div className="mb-24">
                 <span className="section-label-glow">AMOUNT</span>
                 <div className="currency-input-wrapper">
@@ -395,7 +800,7 @@ export default function SmartBudgetingPage() {
                 </div>
               </div>
 
-              {/* 2. Category Selection System */}
+              {/* Category selector */}
               <div className="mb-24">
                 <span className="section-label-glow">CATEGORY</span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
@@ -411,7 +816,6 @@ export default function SmartBudgetingPage() {
                     </button>
                   ))}
 
-                  {/* Add Custom Category Toggle Chip */}
                   <button
                     type="button"
                     className="category-chip category-chip-add"
@@ -422,9 +826,18 @@ export default function SmartBudgetingPage() {
                   </button>
                 </div>
 
-                {/* Inline Custom Category Creator */}
                 {isAddingCustom && (
-                  <div className="custom-cat-input-group">
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      marginTop: 12,
+                      padding: 12,
+                      background: 'rgba(15, 15, 23, 0.6)',
+                      border: '1px solid rgba(124, 106, 246, 0.3)',
+                      borderRadius: 12,
+                    }}
+                  >
                     <input
                       type="text"
                       className="input"
@@ -437,7 +850,7 @@ export default function SmartBudgetingPage() {
                       type="text"
                       className="input"
                       style={{ flex: 1 }}
-                      placeholder="Category name (e.g. Subscriptions)"
+                      placeholder="Category name (e.g. Gym)"
                       value={customName}
                       onChange={(e) => setCustomName(e.target.value)}
                       autoFocus
@@ -454,7 +867,7 @@ export default function SmartBudgetingPage() {
                 )}
               </div>
 
-              {/* 3. Date & Description Row */}
+              {/* Date & Description */}
               <div className="grid-2 mb-24">
                 <div>
                   <span className="section-label-glow">DATE</span>
@@ -471,39 +884,47 @@ export default function SmartBudgetingPage() {
                   <input
                     type="text"
                     className="input"
-                    placeholder="e.g. Dinner with team, Taxi"
+                    placeholder="e.g. Dinner with team"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                   />
                 </div>
               </div>
 
-              {/* Submit Button */}
               <button type="submit" className="submit-btn">
                 ✨ Log Expense
               </button>
             </form>
 
-            {/* Success Toast */}
-            {successMessage && (
-              <div className="toast-success">
-                <span>✅</span>
-                <span>{successMessage}</span>
+            {successToast && (
+              <div
+                style={{
+                  marginTop: 20,
+                  padding: '14px 18px',
+                  background: 'rgba(52, 211, 153, 0.12)',
+                  border: '1px solid rgba(52, 211, 153, 0.3)',
+                  borderRadius: 12,
+                  color: '#34D399',
+                  fontSize: '0.88rem',
+                  fontWeight: 600,
+                }}
+              >
+                ✅ {successToast}
               </div>
             )}
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              RECENT EXPENSES / TRANSACTION HISTORY SECTION
+              4. RECENT EXPENSES / TRANSACTION HISTORY SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card">
             <div className="flex items-center justify-between mb-20">
               <div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: '#F8FAFC' }}>
-                  📜 Recent Expenses
+                  📜 Week {currentWeek} Transactions
                 </h2>
                 <span className="text-muted" style={{ fontSize: '0.8rem' }}>
-                  Live history of logged transactions for this period
+                  Live history of logged transactions for this active week
                 </span>
               </div>
               <span
@@ -521,7 +942,6 @@ export default function SmartBudgetingPage() {
               </span>
             </div>
 
-            {/* List or Empty State */}
             {expensesList.length === 0 ? (
               <div
                 style={{
@@ -533,7 +953,7 @@ export default function SmartBudgetingPage() {
               >
                 <span style={{ fontSize: '2.5rem' }}>🧾</span>
                 <p style={{ margin: '8px 0 4px', fontWeight: 600, color: '#F8FAFC' }}>
-                  No expenses logged yet this week
+                  No expenses logged yet for Week {currentWeek}
                 </p>
                 <p className="text-muted" style={{ fontSize: '0.82rem', margin: 0 }}>
                   Logged transactions will appear here instantly.
@@ -544,7 +964,21 @@ export default function SmartBudgetingPage() {
                 {expensesList.map((tx) => (
                   <div key={tx.id} className="tx-card-item">
                     <div className="flex items-center" style={{ gap: 14 }}>
-                      <div className="tx-icon-badge">{tx.icon}</div>
+                      <div
+                        style={{
+                          width: 42,
+                          height: 42,
+                          borderRadius: 12,
+                          background: 'rgba(124, 106, 246, 0.12)',
+                          border: '1px solid rgba(124, 106, 246, 0.25)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '1.25rem',
+                        }}
+                      >
+                        {tx.icon}
+                      </div>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#F8FAFC' }}>
                           {tx.description}
@@ -570,7 +1004,14 @@ export default function SmartBudgetingPage() {
                     </div>
 
                     <div className="flex items-center" style={{ gap: 12 }}>
-                      <span className="tx-amount-neg">
+                      <span
+                        style={{
+                          fontSize: '1.05rem',
+                          fontWeight: 700,
+                          fontFamily: 'Space Grotesk',
+                          color: '#F87171',
+                        }}
+                      >
                         -₹{tx.amount.toLocaleString('en-IN')}
                       </span>
                       <button
@@ -590,6 +1031,122 @@ export default function SmartBudgetingPage() {
           </div>
         </div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          DYNAMIC SETTLEMENT RECALCULATION MODAL
+         ───────────────────────────────────────────────────────────── */}
+      {settleModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            {settlementType === 'overspend' ? (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                  <span style={{ fontSize: '3rem' }}>🚨</span>
+                  <h2 style={{ color: '#F87171', margin: '8px 0 4px', fontSize: '1.4rem' }}>
+                    Weekly Budget Exceeded!
+                  </h2>
+                  <p className="text-muted" style={{ fontSize: '0.9rem', margin: 0 }}>
+                    You spent <strong style={{ color: '#F87171' }}>₹{weeklySpentSum.toLocaleString('en-IN')}</strong> against your limit of ₹{activeWSL.toLocaleString('en-IN')}.
+                  </p>
+                  <div
+                    style={{
+                      background: 'rgba(248, 113, 113, 0.12)',
+                      border: '1px solid rgba(248, 113, 113, 0.3)',
+                      color: '#F87171',
+                      padding: '10px',
+                      borderRadius: 12,
+                      marginTop: 12,
+                      fontWeight: 700,
+                      fontSize: '1.1rem',
+                    }}
+                  >
+                    Deficit: ₹{settlementAmount.toLocaleString('en-IN')}
+                  </div>
+                </div>
+
+                <p className="section-label-glow">SELECT RECALCULATION ACTION</p>
+
+                {/* Option 1: Buffer Reserve */}
+                <div className="option-choice-card" onClick={handleOverspendBufferDeduct}>
+                  <div style={{ fontWeight: 700, color: '#38BDF8', fontSize: '0.95rem' }}>
+                    🛡️ Deduct from Buffer Reserve
+                  </div>
+                  <p className="text-muted" style={{ fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Cover ₹{settlementAmount.toLocaleString('en-IN')} using your Buffer Reserve (₹{bufferReserveBalance.toLocaleString('en-IN')} available). Keeps upcoming weekly limits unchanged.
+                  </p>
+                </div>
+
+                {/* Option 2: Reduce Future Weekly Limits */}
+                <div className="option-choice-card" onClick={handleOverspendReduceFuture}>
+                  <div style={{ fontWeight: 700, color: '#FBBF24', fontSize: '0.95rem' }}>
+                    📉 Reduce Future Weekly Limits
+                  </div>
+                  <p className="text-muted" style={{ fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Deduct the deficit from remaining monthly pool. Automatically recalculates and lowers limits for remaining weeks.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                  <span style={{ fontSize: '3rem' }}>🎉</span>
+                  <h2 style={{ color: '#34D399', margin: '8px 0 4px', fontSize: '1.4rem' }}>
+                    Weekly Surplus Available!
+                  </h2>
+                  <p className="text-muted" style={{ fontSize: '0.9rem', margin: 0 }}>
+                    Great job! You spent ₹{weeklySpentSum.toLocaleString('en-IN')} out of ₹{activeWSL.toLocaleString('en-IN')}.
+                  </p>
+                  <div
+                    style={{
+                      background: 'rgba(52, 211, 153, 0.12)',
+                      border: '1px solid rgba(52, 211, 153, 0.3)',
+                      color: '#34D399',
+                      padding: '10px',
+                      borderRadius: 12,
+                      marginTop: 12,
+                      fontWeight: 700,
+                      fontSize: '1.1rem',
+                    }}
+                  >
+                    Surplus: ₹{settlementAmount.toLocaleString('en-IN')}
+                  </div>
+                </div>
+
+                <p className="section-label-glow">SELECT SURPLUS ALLOCATION</p>
+
+                {/* Option 1: Send to Savings Goal Pool */}
+                <div className="option-choice-card" onClick={handleUnderspentSendToSavings}>
+                  <div style={{ fontWeight: 700, color: '#A78BFA', fontSize: '0.95rem' }}>
+                    💎 Send to Savings (Goal Pool)
+                  </div>
+                  <p className="text-muted" style={{ fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Add ₹{settlementAmount.toLocaleString('en-IN')} directly to your Savings Goal Pool. Resets next week to baseline.
+                  </p>
+                </div>
+
+                {/* Option 2: Increase Future Limits */}
+                <div className="option-choice-card" onClick={handleUnderspentIncreaseFuture}>
+                  <div style={{ fontWeight: 700, color: '#38BDF8', fontSize: '0.95rem' }}>
+                    📈 Increase Future Weekly Limits
+                  </div>
+                  <p className="text-muted" style={{ fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Redistribute your surplus across remaining weeks, boosting your future weekly allowance.
+                  </p>
+                </div>
+              </>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', marginTop: 8 }}
+              onClick={() => setSettleModalOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
