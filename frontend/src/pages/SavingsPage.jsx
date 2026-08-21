@@ -10,6 +10,11 @@ export default function SavingsPage() {
   const [goalRatioPercent, setGoalRatioPercent] = useState(70); // Default 70% Goals / 30% Stocks
   const [goals, setGoals] = useState([]);
   
+  // Ratio Lock State (Persisted in localStorage for cycle continuity)
+  const [isRatioLocked, setIsRatioLocked] = useState(() => {
+    return localStorage.getItem('savings_ratio_locked') === 'true';
+  });
+
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
   const [savingRatio, setSavingRatio] = useState(false);
@@ -23,6 +28,7 @@ export default function SavingsPage() {
   // Funding Input State per Goal: { [goalId]: amountString }
   const [fundingInputs, setFundingInputs] = useState({});
   const [fundingActiveId, setFundingActiveId] = useState(null);
+  const [fundingErrors, setFundingErrors] = useState({});
 
   // ── Initial Data Load ───────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -63,8 +69,27 @@ export default function SavingsPage() {
   const goalAllocationAmount = Math.round((totalSavings * goalRatioPercent) / 100);
   const stocksAllocationAmount = totalSavings - goalAllocationAmount;
 
+  // ── Derived Goal Pool Metrics ───────────────────────────────────────────
+  const totalFundedAcrossGoals = goals.reduce(
+    (sum, g) => sum + (parseFloat(g.manual_amount ?? 0) || 0),
+    0
+  );
+  const unallocatedGoalPool = Math.max(0, goalAllocationAmount - totalFundedAcrossGoals);
+  const distributedPercentage =
+    goalAllocationAmount > 0
+      ? Math.min(100, Math.round((totalFundedAcrossGoals / goalAllocationAmount) * 100))
+      : 0;
+
+  // ── Handle Ratio Lock Toggle ────────────────────────────────────────────
+  const handleToggleRatioLock = () => {
+    const nextLocked = !isRatioLocked;
+    setIsRatioLocked(nextLocked);
+    localStorage.setItem('savings_ratio_locked', String(nextLocked));
+  };
+
   // ── Handle Ratio Slider Change ──────────────────────────────────────────
   const handleRatioChange = async (newPercent) => {
+    if (isRatioLocked) return;
     setGoalRatioPercent(newPercent);
     const newGoalAmt = Math.round((totalSavings * newPercent) / 100);
     setSavingRatio(true);
@@ -116,12 +141,29 @@ export default function SavingsPage() {
     }
   };
 
-  // ── Add Funds to Goal ───────────────────────────────────────────────────
+  // ── Add Funds to Goal with Dynamic Unallocated Pool Deduction ───────────
   const handleAddFunds = async (goalId) => {
+    setFundingErrors((prev) => ({ ...prev, [goalId]: null }));
+
     const rawVal = fundingInputs[goalId];
     const addAmt = parseFloat(rawVal);
 
-    if (!addAmt || addAmt <= 0) return;
+    if (isNaN(addAmt) || addAmt <= 0) {
+      setFundingErrors((prev) => ({
+        ...prev,
+        [goalId]: 'Please enter a valid positive amount.',
+      }));
+      return;
+    }
+
+    // Enforce Pool Constraint: Cannot exceed remaining unallocated Goal Pool
+    if (addAmt > unallocatedGoalPool) {
+      setFundingErrors((prev) => ({
+        ...prev,
+        [goalId]: `Cannot exceed remaining unallocated Goal Pool (₹${unallocatedGoalPool.toLocaleString('en-IN')} available).`,
+      }));
+      return;
+    }
 
     const targetGoal = goals.find((g) => g.id === goalId);
     if (!targetGoal) return;
@@ -134,7 +176,7 @@ export default function SavingsPage() {
       prev.map((g) => (g.id === goalId ? { ...g, manual_amount: newTotalFunded } : g))
     );
 
-    // Clear funding input
+    // Clear funding input and reset active state
     setFundingInputs((prev) => ({ ...prev, [goalId]: '' }));
     setFundingActiveId(null);
 
@@ -221,6 +263,11 @@ export default function SavingsPage() {
           transition: background 0.3s ease;
         }
 
+        .ratio-slider-track:disabled {
+          cursor: not-allowed;
+          opacity: 0.6;
+        }
+
         .ratio-slider-track::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
@@ -232,6 +279,12 @@ export default function SavingsPage() {
           border: 2px solid #FFFFFF;
           cursor: pointer;
           transition: transform 0.2s ease, background 0.2s ease;
+        }
+
+        .ratio-slider-track:disabled::-webkit-slider-thumb {
+          background: #64748B;
+          cursor: not-allowed;
+          box-shadow: none;
         }
 
         .ratio-slider-track::-webkit-slider-thumb:hover {
@@ -260,6 +313,14 @@ export default function SavingsPage() {
           flex-direction: column;
           align-items: center;
           gap: 4px;
+        }
+
+        .pool-tracker-card {
+          background: linear-gradient(135deg, rgba(124, 106, 246, 0.12) 0%, rgba(56, 189, 248, 0.08) 100%);
+          border: 1px solid rgba(124, 106, 246, 0.3);
+          border-radius: 16px;
+          padding: 20px 24px;
+          margin-bottom: 24px;
         }
 
         .goal-card {
@@ -310,6 +371,33 @@ export default function SavingsPage() {
           box-shadow: 0 4px 14px rgba(124, 106, 246, 0.4);
         }
 
+        .lock-btn {
+          padding: 8px 16px;
+          font-size: 0.82rem;
+          font-weight: 700;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: all 0.25s ease;
+        }
+
+        .lock-btn.locked {
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid #10B981;
+          color: #34D399;
+        }
+
+        .lock-btn.unlocked {
+          background: linear-gradient(135deg, #7C6AF6 0%, #9333EA 100%);
+          border: none;
+          color: #FFFFFF;
+          box-shadow: 0 4px 14px rgba(124, 106, 246, 0.35);
+        }
+
+        .lock-btn:hover {
+          transform: translateY(-1px);
+          filter: brightness(1.1);
+        }
+
         .section-label-glow {
           font-size: 0.75rem;
           font-weight: 700;
@@ -349,10 +437,10 @@ export default function SavingsPage() {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              2. MONTHLY RATIO SPLITTER (GOALS VS STOCKS)
+              2. MONTHLY RATIO SPLITTER (WITH LOCK MECHANISM)
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card mb-32">
-            <div className="flex items-center justify-between mb-16">
+            <div className="flex items-center justify-between mb-16" style={{ flexWrap: 'wrap', gap: 10 }}>
               <div>
                 <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, color: '#F8FAFC' }}>
                   ⚖️ Monthly Ratio Splitter
@@ -361,9 +449,15 @@ export default function SavingsPage() {
                   Divide your total savings between Goal Savings and Stocks/Investments
                 </span>
               </div>
-              {savingRatio && (
-                <span style={{ fontSize: '0.78rem', color: '#7C6AF6' }}>Saving ratio…</span>
-              )}
+
+              {/* Lock Ratio Button / Badge */}
+              <button
+                type="button"
+                className={`lock-btn ${isRatioLocked ? 'locked' : 'unlocked'}`}
+                onClick={handleToggleRatioLock}
+              >
+                {isRatioLocked ? '🔒 Ratio Locked for Current Cycle' : '🔓 Lock Ratio'}
+              </button>
             </div>
 
             {/* Range Slider */}
@@ -380,6 +474,7 @@ export default function SavingsPage() {
                 className="ratio-slider-track"
                 value={goalRatioPercent}
                 onChange={(e) => handleRatioChange(Number(e.target.value))}
+                disabled={isRatioLocked}
               />
             </div>
 
@@ -406,12 +501,47 @@ export default function SavingsPage() {
 
             {/* Helper Note */}
             <p className="text-muted" style={{ fontSize: '0.78rem', textAlign: 'center', margin: 0, fontStyle: 'italic' }}>
-              🔒 Ratio locked for the monthly cycle based on initial income allocation.
+              {isRatioLocked
+                ? '🔒 Ratio is locked for the monthly cycle. Click button above to unlock.'
+                : '💡 Adjust slider to split your savings pool, then lock your ratio.'}
             </p>
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              3. INTERACTIVE GOALS MANAGEMENT SECTION
+              3. UNALLOCATED GOAL POOL PROMINENT TRACKER
+             ───────────────────────────────────────────────────────────── */}
+          <div className="pool-tracker-card">
+            <div className="flex justify-between items-center flex-wrap" style={{ gap: 12, marginBottom: 12 }}>
+              <div>
+                <span className="section-label-glow" style={{ margin: 0, color: '#A78BFA' }}>
+                  GOAL POOL BALANCES
+                </span>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '2px 0 0', color: '#F8FAFC' }}>
+                  Remaining Unallocated: <span style={{ color: '#38BDF8', fontFamily: 'Space Grotesk, sans-serif' }}>₹{unallocatedGoalPool.toLocaleString('en-IN')}</span>
+                </h3>
+              </div>
+
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '0.82rem', color: '#94A3B8' }}>
+                  Distributed: ₹{totalFundedAcrossGoals.toLocaleString('en-IN')} / ₹{goalAllocationAmount.toLocaleString('en-IN')}
+                </span>
+              </div>
+            </div>
+
+            {/* Visual Pool Bar */}
+            <div className="progress-bar-bg" style={{ margin: 0 }}>
+              <div
+                className="progress-bar-fill-gradient"
+                style={{
+                  width: `${distributedPercentage}%`,
+                  background: 'linear-gradient(90deg, #7C6AF6 0%, #38BDF8 100%)',
+                }}
+              />
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────
+              4. INTERACTIVE GOALS MANAGEMENT SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card">
             <div className="flex items-center justify-between mb-24">
@@ -420,7 +550,7 @@ export default function SavingsPage() {
                   🎯 Active Goals Management
                 </h2>
                 <span className="text-muted" style={{ fontSize: '0.8rem' }}>
-                  Create goals and assign funds from your Goal Allocation pool
+                  Create goals and assign funds from your remaining unallocated Goal Pool (₹{unallocatedGoalPool.toLocaleString('en-IN')})
                 </span>
               </div>
             </div>
@@ -490,7 +620,8 @@ export default function SavingsPage() {
                 const target = parseFloat(goal.target_amount ?? 0);
                 const current = parseFloat(goal.manual_amount ?? 0);
                 const progressPct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
-                const remaining = Math.max(0, target - current);
+                const remainingTarget = Math.max(0, target - current);
+                const goalError = fundingErrors[goal.id];
 
                 return (
                   <div key={goal.id} className="goal-card">
@@ -536,8 +667,15 @@ export default function SavingsPage() {
                     {/* Progress details */}
                     <div className="flex justify-between items-center text-muted" style={{ fontSize: '0.8rem', marginBottom: 12 }}>
                       <span>Funded: ₹{current.toLocaleString('en-IN')}</span>
-                      <span>Remaining: ₹{remaining.toLocaleString('en-IN')}</span>
+                      <span>Remaining Target: ₹{remainingTarget.toLocaleString('en-IN')}</span>
                     </div>
+
+                    {/* Funding Validation Error */}
+                    {goalError && (
+                      <div style={{ color: '#F87171', fontSize: '0.78rem', marginBottom: 10 }}>
+                        ⚠️ {goalError}
+                      </div>
+                    )}
 
                     {/* Add Funds Action Row */}
                     <div className="flex items-center" style={{ gap: 8 }}>
@@ -547,12 +685,16 @@ export default function SavingsPage() {
                             type="number"
                             className="input"
                             style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-                            placeholder="Amount (₹)"
+                            placeholder={`Max ₹${unallocatedGoalPool.toLocaleString('en-IN')}`}
                             min="1"
+                            max={unallocatedGoalPool}
                             value={fundingInputs[goal.id] || ''}
-                            onChange={(e) =>
-                              setFundingInputs({ ...fundingInputs, [goal.id]: e.target.value })
-                            }
+                            onChange={(e) => {
+                              setFundingInputs({ ...fundingInputs, [goal.id]: e.target.value });
+                              if (fundingErrors[goal.id]) {
+                                setFundingErrors({ ...fundingErrors, [goal.id]: null });
+                              }
+                            }}
                             autoFocus
                           />
                           <button
@@ -566,7 +708,10 @@ export default function SavingsPage() {
                             type="button"
                             className="btn btn-secondary btn-sm"
                             style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                            onClick={() => setFundingActiveId(null)}
+                            onClick={() => {
+                              setFundingActiveId(null);
+                              setFundingErrors({ ...fundingErrors, [goal.id]: null });
+                            }}
                           >
                             Cancel
                           </button>
@@ -575,6 +720,7 @@ export default function SavingsPage() {
                         <button
                           type="button"
                           className="add-funds-btn"
+                          disabled={unallocatedGoalPool <= 0}
                           onClick={() => setFundingActiveId(goal.id)}
                         >
                           💵 Add Funds
