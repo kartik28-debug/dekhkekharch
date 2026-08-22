@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import NavBar from '../components/NavBar';
 import { getDashboard } from '../api/dashboard';
-import { getBufferReserve, withdrawBufferReserve, depositBufferReserve } from '../api/bufferReserve';
+import { getBufferReserve, withdrawBufferReserve } from '../api/bufferReserve';
 import { getSavingsAllocation, putSavingsAllocation } from '../api/savings';
+import {
+  calculateMonthlyWantsBreakdown,
+  getCurrentWeekFromDay,
+  getDaysInMonth,
+} from '../lib/weeklyCheckpoint';
 
 const DEFAULT_CATEGORIES = [
   { id: 'food', name: 'Food', icon: '🍔', ratio: 0.35 },
@@ -14,11 +19,19 @@ const DEFAULT_CATEGORIES = [
 ];
 
 export default function SmartBudgetingPage() {
+  // ── Date Anchor & Calendar Info ──────────────────────────────────────────
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1-indexed
+  const currentDay = today.getDate();
+  const totalDaysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const calendarWeekInfo = getCurrentWeekFromDay(currentDay);
+
   // ── Core Budget & Weekly State ──────────────────────────────────────────
   const [monthlyPool, setMonthlyPool] = useState(10000);
-  const [currentWeek, setCurrentWeek] = useState(1);
+  const [currentWeek, setCurrentWeek] = useState(calendarWeekInfo.weekNumber);
   const [totalWeeks] = useState(4);
-  const [activeWSL, setActiveWSL] = useState(2500); // Baseline W / 4
+  const [activeWSL, setActiveWSL] = useState(2325); // Set by calculateMonthlyWantsBreakdown
   const [remainingPool, setRemainingPool] = useState(10000);
 
   // Cross-Page Balances
@@ -65,6 +78,13 @@ export default function SmartBudgetingPage() {
   const [formError, setFormError] = useState(null);
   const [successToast, setSuccessToast] = useState(null);
 
+  // ── Derived Mathematical Wants Breakdown ──────────────────────────────────
+  const wantsBreakdown = calculateMonthlyWantsBreakdown(
+    monthlyPool,
+    currentYear,
+    currentMonth
+  );
+
   // ── Initial Fetch & Cross-Page State Sync ────────────────────────────────
   const loadInitialData = useCallback(async () => {
     try {
@@ -74,13 +94,18 @@ export default function SmartBudgetingPage() {
         getSavingsAllocation().catch(() => ({})),
       ]);
 
-      // Monthly Wants Pool (DSL Bucket balance or allocated amount)
+      // Monthly Wants Pool (DSL Bucket allocated balance)
       const dslVal = parseFloat(dashData?.buckets?.dsl?.allocated ?? 10000);
       const wantsPool = isNaN(dslVal) || dslVal <= 0 ? 10000 : dslVal;
       setMonthlyPool(wantsPool);
 
-      const baseline = Math.round(wantsPool / 4);
-      setActiveWSL(baseline);
+      // Compute mathematical 93%/7% or 100% split based on month length
+      const now = new Date();
+      const yr = now.getFullYear();
+      const mo = now.getMonth() + 1;
+      const calcBreakdown = calculateMonthlyWantsBreakdown(wantsPool, yr, mo);
+
+      setActiveWSL(calcBreakdown.weeklyBase);
       setRemainingPool(wantsPool);
 
       // Buffer Reserve Balance
@@ -243,7 +268,7 @@ export default function SmartBudgetingPage() {
       );
     }
 
-    advanceToNextWeek(activeWSL);
+    advanceToNextWeek(wantsBreakdown.weeklyBase);
   };
 
   // ── Overspend Option 2: Reduce Future Weekly Limits ────────────────────────
@@ -275,8 +300,7 @@ export default function SmartBudgetingPage() {
     }
 
     setSettleNotice(`💎 Surplus of ₹${surplus.toLocaleString('en-IN')} transferred to Savings Goal Pool!`);
-    // Reset next week's allowance to baseline
-    const baseline = Math.round(monthlyPool / 4);
+    const baseline = wantsBreakdown.weeklyBase;
     setActiveWSL(baseline);
     advanceToNextWeek(baseline);
   };
@@ -319,7 +343,7 @@ export default function SmartBudgetingPage() {
       {/* ── Custom Dark Glassmorphism Styles ── */}
       <style>{`
         .sb-container {
-          max-width: 820px;
+          max-width: 840px;
           margin: 0 auto;
           padding: 0 16px 120px;
         }
@@ -340,8 +364,16 @@ export default function SmartBudgetingPage() {
           border: 1px solid rgba(124, 106, 246, 0.3);
           border-radius: 20px;
           padding: 28px;
-          margin-bottom: 28px;
+          margin-bottom: 24px;
           box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .math-breakdown-card {
+          background: rgba(15, 15, 26, 0.75);
+          border: 1px solid rgba(124, 106, 246, 0.25);
+          border-radius: 18px;
+          padding: 20px 24px;
+          margin-bottom: 28px;
         }
 
         .metric-value-huge {
@@ -539,12 +571,12 @@ export default function SmartBudgetingPage() {
       <div className="page">
         <div className="sb-container">
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <h1 className="page-title" style={{ marginBottom: 6 }}>
               Smart Budgeting
             </h1>
             <p className="text-muted" style={{ fontSize: '0.92rem' }}>
-              Dynamic Weekly Tracker with Automated Buffer Reserve & Savings Integration
+              Dynamic Weekly Spend Limit (DSL) Calculation Engine & Tracker
             </p>
           </div>
 
@@ -577,7 +609,7 @@ export default function SmartBudgetingPage() {
                   WEEKLY SPEND LIMIT (WSL)
                 </span>
                 <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '2px 0 0', color: '#F8FAFC' }}>
-                  Week {currentWeek} of {totalWeeks}
+                  {calendarWeekInfo.label}
                 </h2>
               </div>
 
@@ -602,7 +634,7 @@ export default function SmartBudgetingPage() {
             >
               <div>
                 <span className="text-muted" style={{ fontSize: '0.78rem' }}>
-                  Active Weekly Limit
+                  Active Weekly Limit ($WSL$)
                 </span>
                 <div className="metric-value-huge" style={{ color: '#F8FAFC' }}>
                   ₹{activeWSL.toLocaleString('en-IN')}
@@ -661,7 +693,99 @@ export default function SmartBudgetingPage() {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              2. PER-CATEGORY PROGRESS BREAKDOWN
+              2. MATHEMATICAL WANTS POOL & CUSHION BREAKDOWN CARD
+             ───────────────────────────────────────────────────────────── */}
+          <div className="math-breakdown-card">
+            <div className="flex justify-between items-center flex-wrap mb-12" style={{ gap: 10 }}>
+              <div>
+                <span className="section-label-glow" style={{ color: '#38BDF8', margin: 0 }}>
+                  MONTHLY WANTS ENGINE (SALARY ANCHOR: 1st OF MONTH)
+                </span>
+                <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#F8FAFC', marginTop: 2 }}>
+                  Total Month Length: <strong>{totalDaysInMonth} Days</strong> ({wantsBreakdown.totalDays === 28 ? 'February' : 'Standard 30/31 Day Month'})
+                </div>
+              </div>
+              <span
+                style={{
+                  fontSize: '0.76rem',
+                  fontWeight: 700,
+                  color: '#A78BFA',
+                  background: 'rgba(124, 106, 246, 0.15)',
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(124, 106, 246, 0.3)',
+                }}
+              >
+                ⚓ Day {currentDay} of {totalDaysInMonth}
+              </span>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                gap: 14,
+                marginTop: 14,
+              }}
+            >
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: 12,
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <span className="text-muted" style={{ fontSize: '0.74rem' }}>
+                  Total Monthly Wants ($W$)
+                </span>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#F8FAFC', fontFamily: 'Space Grotesk' }}>
+                  ₹{monthlyPool.toLocaleString('en-IN')}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(124, 106, 246, 0.08)',
+                  borderRadius: 12,
+                  border: '1px solid rgba(124, 106, 246, 0.2)',
+                }}
+              >
+                <span style={{ fontSize: '0.74rem', color: '#A78BFA', fontWeight: 600 }}>
+                  {totalDaysInMonth === 28 ? '4-Week Pool (100%)' : '4-Week Pool (93%)'}
+                </span>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#A78BFA', fontFamily: 'Space Grotesk' }}>
+                  ₹{wantsBreakdown.fourWeeksPool.toLocaleString('en-IN')}
+                </div>
+                <span className="text-muted" style={{ fontSize: '0.7rem' }}>
+                  Baseline: ₹{wantsBreakdown.weeklyBase.toLocaleString('en-IN')}/wk (Days 1–28)
+                </span>
+              </div>
+
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(56, 189, 248, 0.08)',
+                  borderRadius: 12,
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                }}
+              >
+                <span style={{ fontSize: '0.74rem', color: '#38BDF8', fontWeight: 600 }}>
+                  Month-End Cushion ({totalDaysInMonth === 28 ? '0%' : '7%'})
+                </span>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#38BDF8', fontFamily: 'Space Grotesk' }}>
+                  ₹{wantsBreakdown.cushionBuffer.toLocaleString('en-IN')}
+                </div>
+                <span className="text-muted" style={{ fontSize: '0.7rem' }}>
+                  {totalDaysInMonth === 28 ? 'No extra days' : 'Dedicated for Days 29–31'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────
+              3. PER-CATEGORY PROGRESS BREAKDOWN
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card mb-32">
             <div className="flex justify-between items-center mb-20">
@@ -751,7 +875,7 @@ export default function SmartBudgetingPage() {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              3. LOG EXPENSE FORM SECTION
+              4. LOG EXPENSE FORM SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card mb-32">
             <div className="flex items-center justify-between mb-24">
@@ -915,7 +1039,7 @@ export default function SmartBudgetingPage() {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              4. RECENT EXPENSES / TRANSACTION HISTORY SECTION
+              5. RECENT EXPENSES / TRANSACTION HISTORY SECTION
              ───────────────────────────────────────────────────────────── */}
           <div className="glass-card">
             <div className="flex items-center justify-between mb-20">
@@ -1066,7 +1190,6 @@ export default function SmartBudgetingPage() {
 
                 <p className="section-label-glow">SELECT RECALCULATION ACTION</p>
 
-                {/* Option 1: Buffer Reserve */}
                 <div className="option-choice-card" onClick={handleOverspendBufferDeduct}>
                   <div style={{ fontWeight: 700, color: '#38BDF8', fontSize: '0.95rem' }}>
                     🛡️ Deduct from Buffer Reserve
@@ -1076,7 +1199,6 @@ export default function SmartBudgetingPage() {
                   </p>
                 </div>
 
-                {/* Option 2: Reduce Future Weekly Limits */}
                 <div className="option-choice-card" onClick={handleOverspendReduceFuture}>
                   <div style={{ fontWeight: 700, color: '#FBBF24', fontSize: '0.95rem' }}>
                     📉 Reduce Future Weekly Limits
@@ -1114,7 +1236,6 @@ export default function SmartBudgetingPage() {
 
                 <p className="section-label-glow">SELECT SURPLUS ALLOCATION</p>
 
-                {/* Option 1: Send to Savings Goal Pool */}
                 <div className="option-choice-card" onClick={handleUnderspentSendToSavings}>
                   <div style={{ fontWeight: 700, color: '#A78BFA', fontSize: '0.95rem' }}>
                     💎 Send to Savings (Goal Pool)
@@ -1124,7 +1245,6 @@ export default function SmartBudgetingPage() {
                   </p>
                 </div>
 
-                {/* Option 2: Increase Future Limits */}
                 <div className="option-choice-card" onClick={handleUnderspentIncreaseFuture}>
                   <div style={{ fontWeight: 700, color: '#38BDF8', fontSize: '0.95rem' }}>
                     📈 Increase Future Weekly Limits

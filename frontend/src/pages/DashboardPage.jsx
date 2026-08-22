@@ -22,12 +22,19 @@ const PRESET_RATIOS = {
   balanced: { major: '50.00', dsl: '25.00', savings: '15.00', emergency: '10.00' },
 };
 
-
 /** Format a decimal string from the API as a human-readable INR string */
 function fmt(val) {
   if (val === null || val === undefined) return '₹0';
   const n = parseFloat(val);
   return '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+/** Format ISO month string "2026-08" to "August 2026" */
+function formatMonthLabel(monthStr) {
+  if (!monthStr) return 'August 2026';
+  const [year, month] = monthStr.split('-');
+  const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
+  return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
 }
 
 /** Skeleton shimmer block */
@@ -51,6 +58,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
 
+  // ── Month / Year Cycle Selector State ────────────────────────────────
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    return localStorage.getItem('simulated_cycle_month') || '2026-08';
+  });
+
+  // Per-Month Lock State (Unlocked by default when browsing months)
+  const [isCycleLocked, setIsCycleLocked] = useState(() => {
+    const activeM = localStorage.getItem('simulated_cycle_month') || '2026-08';
+    return localStorage.getItem(`simulated_locked_${activeM}`) === 'true';
+  });
+
   // ── Local form state ───────────────────────────────────────────────────
   const [salaryInput, setSalaryInput] = useState('');
   const [mode, setMode] = useState('focused');
@@ -63,6 +81,22 @@ export default function DashboardPage() {
     major: '', dsl: '', savings: '', emergency: '',
   });
 
+  // Handle Month/Year Change (Unlocked by default for new selected month)
+  const handleMonthChange = (newMonthStr) => {
+    setSelectedMonth(newMonthStr);
+    localStorage.setItem('simulated_cycle_month', newMonthStr);
+
+    // Read per-month lock status (default to unlocked false so historical data is editable)
+    const monthLocked = localStorage.getItem(`simulated_locked_${newMonthStr}`) === 'true';
+    setIsCycleLocked(monthLocked);
+
+    // Load saved salary for that month if present
+    const savedSal = localStorage.getItem(`simulated_salary_${newMonthStr}`);
+    if (savedSal) {
+      setSalaryInput(savedSal);
+    }
+  };
+
   // ── Fetch dashboard data ───────────────────────────────────────────────
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
@@ -70,12 +104,10 @@ export default function DashboardPage() {
     try {
       const data = await getDashboard();
       setDashData(data);
-      // Sync form with latest API values so they stay consistent
       if (data.has_allocation) {
         setSalaryInput(parseFloat(data.salary).toFixed(0));
         setMode(data.mode || 'focused');
       }
-      // Pre-fill custom ratios if the user has used them before
       if (data.last_custom_ratios) {
         const r = data.last_custom_ratios;
         setCustomRatios({
@@ -106,6 +138,9 @@ export default function DashboardPage() {
       return;
     }
 
+    // Persist per-month salary
+    localStorage.setItem(`simulated_salary_${selectedMonth}`, salaryInput);
+
     const payload = { salary: salaryNum, mode };
     if (mode === 'custom') {
       const r = customRatios;
@@ -125,9 +160,7 @@ export default function DashboardPage() {
     try {
       const data = await postSalary(payload);
       setDashData(data);
-      if (data.applied_to === 'next_month') {
-        setAppliedNote('⏭ Current month is locked — changes will apply from next month.');
-      }
+      setAppliedNote(`✅ Calculated budget allocation for ${formatMonthLabel(selectedMonth)}.`);
     } catch (err) {
       setSubmitError(err.message);
     } finally {
@@ -137,45 +170,54 @@ export default function DashboardPage() {
 
   // ── Lock / Unlock month ──────────────────────────────────────────────────
   async function handleLock() {
+    setSubmitting(true);
     try {
       const data = await lockMonth();
       setDashData(data);
+      setIsCycleLocked(true);
+      localStorage.setItem(`simulated_locked_${selectedMonth}`, 'true');
     } catch (err) {
       setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
   async function handleUnlock() {
+    setSubmitting(true);
     try {
       const data = await unlockMonth();
       setDashData(data);
+      setIsCycleLocked(false);
+      localStorage.setItem(`simulated_locked_${selectedMonth}`, 'false');
       setAppliedNote(null);
     } catch (err) {
       setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
-
   // ── Derived display values ─────────────────────────────────────────────
   const buckets = dashData?.buckets ?? {};
-  const isLocked = dashData?.is_locked ?? false;
+  const isLocked = isCycleLocked || (dashData?.is_locked ?? false);
   const hasSalary = dashData?.has_allocation ?? false;
 
   const dslBalance = buckets.dsl?.balance;
   const dslAlloc = buckets.dsl?.allocated;
   const savBalance = buckets.savings?.balance;
   const emergBal = buckets.buffer_reserve?.balance || 0;
-  const majorBal = buckets.major?.balance;
 
   // "Allocatable" = everything except Major Expenses bucket
   const allocatable = hasSalary
     ? parseFloat(dslBalance || 0) + parseFloat(savBalance || 0) + parseFloat(emergBal || 0)
     : 0;
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  const formattedMonth = formatMonthLabel(selectedMonth);
+  const cycleAnchorDate = `${selectedMonth}-01`;
+
   return (
     <>
-      {/* shimmer keyframe + dashboard-specific styles */}
       <style>{`
         @keyframes shimmer {
           0%   { background-position: 200% 0; }
@@ -200,6 +242,34 @@ export default function DashboardPage() {
         .ratio-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:12px; }
         .ratio-grid label { font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-family:'Space Grotesk',sans-serif; }
         .ratio-grid input  { width:100%; margin-top:4px; }
+
+        .cycle-selector-card {
+          background: rgba(20, 20, 31, 0.75);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(124, 106, 246, 0.3);
+          border-radius: 18px;
+          padding: 20px 24px;
+          margin-bottom: 24px;
+          box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4);
+        }
+
+        .cycle-month-picker {
+          background: rgba(15, 15, 23, 0.8);
+          border: 1px solid rgba(124, 106, 246, 0.4);
+          border-radius: 12px;
+          color: #F8FAFC;
+          padding: 10px 14px;
+          font-size: 0.95rem;
+          font-weight: 600;
+          outline: none;
+          cursor: pointer;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .cycle-month-picker:focus {
+          border-color: #7C6AF6;
+          box-shadow: 0 0 16px rgba(124, 106, 246, 0.3);
+        }
       `}</style>
 
       <NavBar showBack={false} />
@@ -220,6 +290,72 @@ export default function DashboardPage() {
           }}>H</div>
         </div>
 
+        {/* ── Interactive Historical Month / Year Cycle Selector ── */}
+        <div className="cycle-selector-card">
+          <div className="flex justify-between items-center flex-wrap" style={{ gap: 14 }}>
+            <div>
+              <span className="section-label" style={{ margin: 0, color: '#A78BFA' }}>
+                HISTORICAL SALARY CYCLE SELECTOR
+              </span>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '2px 0 0', color: '#F8FAFC' }}>
+                Simulating Cycle: <span style={{ color: '#38BDF8' }}>{formattedMonth}</span>
+              </h2>
+              <span className="text-muted" style={{ fontSize: '0.78rem' }}>
+                Anchor Date: <strong style={{ color: '#F8FAFC' }}>{cycleAnchorDate}</strong> (Select any past or current month)
+              </span>
+            </div>
+
+            <div className="flex items-center" style={{ gap: 10 }}>
+              {/* Fully interactive month picker allowing user to browse past/future months */}
+              <input
+                type="month"
+                className="cycle-month-picker"
+                value={selectedMonth}
+                min="2024-01"
+                max="2026-12"
+                onChange={(e) => handleMonthChange(e.target.value)}
+                title="Choose historical or active month to simulate financial data"
+              />
+
+              {isLocked ? (
+                <span
+                  style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    color: '#34D399',
+                    background: 'rgba(52, 211, 153, 0.15)',
+                    border: '1px solid #34D399',
+                    padding: '8px 14px',
+                    borderRadius: 12,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  🔒 Cycle Locked
+                </span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    color: '#FBBF24',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    border: '1px solid #FBBF24',
+                    padding: '8px 14px',
+                    borderRadius: 12,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  🔓 Unlocked (Editable)
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* ── API error banner ── */}
         {apiError && (
           <div className="error-note" style={{ marginBottom: 24 }}>
@@ -233,7 +369,7 @@ export default function DashboardPage() {
 
         {/* ── Salary form ── */}
         <form onSubmit={handleSalarySubmit}>
-          <p className="section-label">Monthly Salary</p>
+          <p className="section-label">Monthly Salary ({formattedMonth})</p>
           <div className={`salary-row mb-${mode === 'custom' ? '8' : '16'}`}>
             <span className="salary-prefix">₹</span>
             {loading ? (
@@ -254,7 +390,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Mode selector */}
-          <p className="section-label">Budget Mode</p>
+          <p className="section-label">Budget Mode ({formattedMonth})</p>
           <div className="mode-selector mb-16">
             {MODES.map(m => (
               <button
@@ -333,7 +469,7 @@ export default function DashboardPage() {
                 style={{ flex: 1 }}
                 disabled={submitting || loading}
               >
-                {submitting ? 'Saving…' : '✓ Apply'}
+                {submitting ? 'Saving…' : '✓ Apply Allocation'}
               </button>
             )}
             {hasSalary && !isLocked && (
@@ -343,14 +479,21 @@ export default function DashboardPage() {
                 className="btn btn-secondary"
                 onClick={handleLock}
                 disabled={submitting}
+                style={{
+                  background: 'linear-gradient(135deg, #7C6AF6 0%, #9333EA 100%)',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  border: 'none',
+                  boxShadow: '0 4px 16px rgba(124, 106, 246, 0.4)',
+                }}
               >
-                🔒 Start Month
+                🔒 Lock Cycle for {formattedMonth}
               </button>
             )}
             {isLocked && (
               <div className="flex items-center" style={{ flex: 1, gap: 10 }}>
-                <div className="apply-note" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
-                  🔒 Month locked — changes apply from next month
+                <div className="apply-note" style={{ flex: 1, margin: 0, textAlign: 'center', fontWeight: 600 }}>
+                  🔒 Cycle for {formattedMonth} is Locked
                 </div>
                 <button
                   id="unlock-month-btn"
@@ -359,7 +502,7 @@ export default function DashboardPage() {
                   onClick={handleUnlock}
                   disabled={submitting}
                 >
-                  🔓 Unlock
+                  🔓 Switch / Unlock Month
                 </button>
               </div>
             )}
@@ -369,7 +512,7 @@ export default function DashboardPage() {
         {/* ── Quick-stats row ── */}
         <div className="grid-2 mb-24">
           <Card>
-            <p className="section-label mb-8">Allocatable</p>
+            <p className="section-label mb-8">Allocatable ({formattedMonth})</p>
             {loading ? (
               <Shimmer style={{ height: 28, width: '70%', marginBottom: 6 }} />
             ) : (
@@ -382,7 +525,7 @@ export default function DashboardPage() {
             </p>
           </Card>
           <Card>
-            <p className="section-label mb-8">Monthly Wants</p>
+            <p className="section-label mb-8">Monthly Wants ({formattedMonth})</p>
             {loading ? (
               <Shimmer style={{ height: 28, width: '60%', marginBottom: 6 }} />
             ) : (
@@ -397,7 +540,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── 4-bucket breakdown ── */}
-        <p className="section-label">Bucket Breakdown</p>
+        <p className="section-label">Bucket Breakdown ({formattedMonth})</p>
         <div className="bucket-grid">
           {[
             { key: 'major', label: 'Major Expenses', color: 'var(--accent)', icon: '🏠' },
