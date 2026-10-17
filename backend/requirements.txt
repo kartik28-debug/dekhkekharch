@@ -1,0 +1,12 @@
+# FastAPI auth server dependencies
+fastapi>=0.109
+uvicorn[standard]>=0.27
+sqlalchemy[asyncio]>=2.0  # [asyncio] pulls in greenlet automatically
+greenlet>=3.0              # async compatibility for SQLAlchemy
+asyncpg>=0.29          # async PostgreSQL driver for SQLAlchemy
+psycopg2-binary>=2.9   # sync driver (used by import_students.py)
+passlib[argon2]>=1.7   # Argon2 password hashing
+python-jose[cryptography]>=3.3  # JWT signing/verification
+python-dotenv>=1.0
+slowapi>=0.1.9         # rate limiting for FastAPI
+python-multipart>=0.0.9
