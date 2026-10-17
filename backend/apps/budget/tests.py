@@ -1,4 +1,4 @@
-﻿"""
+"""
 Budget app test suite.
 
 Tests cover:
@@ -17,7 +17,10 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from apps.accounts.models import User
+import os
+from jose import jwt
+
+from apps.accounts.models import Student, User
 from apps.budget.models import BucketBalance, BucketTransaction, MonthlyAllocation
 from core.services.allocation import compute_allocation
 from core.utils.atomic_ops import InsufficientFundsError, transfer_between_buckets
@@ -27,17 +30,42 @@ from core.utils.atomic_ops import InsufficientFundsError, transfer_between_bucke
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_user(email="test@example.com", password="testpass123"):
-    return User.objects.create_user(username=email, email=email, password=password)
-
-
-def get_token(client, email="test@example.com", password="testpass123"):
-    resp = client.post(
-        reverse("token_obtain_pair"),
-        {"username": email, "password": password},
-        format="json",
+def make_user(roll_number="26BTCS001", name="Test Student"):
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                id SERIAL PRIMARY KEY,
+                roll_number VARCHAR(50) UNIQUE NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                password_hash VARCHAR(512) NOT NULL,
+                must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+    Student.objects.get_or_create(
+        roll_number=roll_number,
+        defaults={
+            "name": name,
+            "password_hash": "test_hash",
+            "must_change_password": False,
+        },
     )
-    return resp.data["access"]
+    user, _ = User.objects.get_or_create(
+        username=roll_number,
+        defaults={
+            "roll_number": roll_number,
+            "first_name": name,
+            "email": f"{roll_number.lower()}@test.edu",
+        },
+    )
+    return user
+
+
+def get_token(client=None, email=None, password=None, roll_number="26BTCS001"):
+    secret = os.environ.get("JWT_SECRET_KEY", "test-secret")
+    return jwt.encode({"sub": roll_number}, secret, algorithm="HS256")
 
 
 # ---------------------------------------------------------------------------

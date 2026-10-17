@@ -41,5 +41,12 @@ Thumbs.db
 # ML (if you'll have model files/datasets in this repo too)
 *.pkl
 *.h5
+# CSV — exclude ALL real data files; keep only the template skeleton
 *.csv
-!sample_data.csv
+# Allow the empty header-only template (no student data)
+!backend/data/students.csv
+
+# FastAPI / auth server
+backend/.env
+backend/app/__pycache__/
+backend/app/routes/__pycache__/

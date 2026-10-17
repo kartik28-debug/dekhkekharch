@@ -1,14 +1,9 @@
 """
-Auth URL routes — JWT token endpoints only (stub for now).
-Full register/login views will be added in the accounts phase.
+Accounts URLs.
+Django independent auth endpoints are disabled.
+FastAPI (/api/auth/*) is the sole authentication authority.
 """
 
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-urlpatterns = [
-    # POST /api/auth/token/       → obtain access + refresh token pair
-    path("token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    # POST /api/auth/token/refresh/ → exchange refresh token for new access token
-    path("token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-]
+urlpatterns = []

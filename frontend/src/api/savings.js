@@ -6,6 +6,8 @@
  *   PUT /api/savings/allocation/   → persist the user's goal_amount choice
  */
 
+import { apiFetchJson } from './client';
+
 const BASE = '/api/savings';
 
 /**
@@ -15,12 +17,7 @@ const BASE = '/api/savings';
  * goal_amount = 0 if not yet set for this month.
  */
 export async function getSavingsAllocation() {
-  const res = await fetch(`${BASE}/allocation/`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
+  return apiFetchJson(`${BASE}/allocation/`);
 }
 
 /**
@@ -31,18 +28,8 @@ export async function getSavingsAllocation() {
  * @param {{ goal_amount: number }} payload
  */
 export async function putSavingsAllocation(payload) {
-  const res = await fetch(`${BASE}/allocation/`, {
+  return apiFetchJson(`${BASE}/allocation/`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const firstError =
-      typeof data === 'object'
-        ? Object.values(data).flat().join(' ')
-        : `HTTP ${res.status}`;
-    throw new Error(firstError);
-  }
-  return data;
 }

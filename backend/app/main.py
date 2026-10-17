@@ -75,7 +75,11 @@ app.add_middleware(
 # ─── Startup — create DB tables ──────────────────────────────────────────────
 @app.on_event("startup")
 async def startup() -> None:
-    logger.info("Starting FinanceOS Auth API — creating tables if needed …")
+    if not os.environ.get("DATABASE_URL"):
+        raise RuntimeError("Missing required environment variable: DATABASE_URL")
+    if not os.environ.get("JWT_SECRET_KEY"):
+        raise RuntimeError("Missing required environment variable: JWT_SECRET_KEY")
+    logger.info("Starting FinanceOS Auth API — verifying database …")
     await create_tables()
     logger.info("Database ready.")
 

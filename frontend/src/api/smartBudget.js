@@ -2,30 +2,16 @@
  * smartBudget.js — API calls for the Smart Budgeting v2 backend.
  */
 
-const BASE = '/api/smart-budget';
+import { apiFetch, apiFetchJson } from './client';
 
-async function fetchJson(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const firstError = typeof err === 'object' 
-      ? Object.values(err).flat().join(' ') 
-      : `HTTP ${res.status}`;
-    throw new Error(firstError);
-  }
-  return res.json();
-}
+const BASE = '/api/smart-budget';
 
 /**
  * Fetch the complete Smart Budget state.
  * Automatically catches up missed weeks on the backend.
  */
 export function getState() {
-  return fetchJson(`${BASE}/state/`);
+  return apiFetchJson(`${BASE}/state/`);
 }
 
 /**
@@ -34,7 +20,7 @@ export function getState() {
  * @param {object} payload { amount, description, expense_date }
  */
 export function logExpense(payload) {
-  return fetchJson(`${BASE}/entries/`, {
+  return apiFetchJson(`${BASE}/entries/`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -47,7 +33,7 @@ export function logExpense(payload) {
  * @param {object} payload { amount, description, expense_date }
  */
 export function editExpense(id, payload) {
-  return fetchJson(`${BASE}/entries/${id}/`, {
+  return apiFetchJson(`${BASE}/entries/${id}/`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
@@ -58,17 +44,21 @@ export function editExpense(id, payload) {
  * 
  * @param {number} id 
  */
-export function deleteExpense(id) {
-  return fetchJson(`${BASE}/entries/${id}/`, {
+export async function deleteExpense(id) {
+  const res = await apiFetch(`${BASE}/entries/${id}/`, {
     method: 'DELETE',
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
 }
 
 /**
  * Manually trigger week-end settlement.
  */
 export function endWeek() {
-  return fetchJson(`${BASE}/end-week/`, {
+  return apiFetchJson(`${BASE}/end-week/`, {
     method: 'POST',
   });
 }
@@ -78,7 +68,7 @@ export function endWeek() {
  * Returns action needed (e.g. SURPLUS to allocate, DEFICIT to cover).
  */
 export function settleMonth() {
-  return fetchJson(`${BASE}/settle-month/`, {
+  return apiFetchJson(`${BASE}/settle-month/`, {
     method: 'POST',
   });
 }
@@ -90,7 +80,7 @@ export function settleMonth() {
  * @param {number} amount 
  */
 export function allocateSurplus(destination, amount) {
-  return fetchJson(`${BASE}/allocate-surplus/`, {
+  return apiFetchJson(`${BASE}/allocate-surplus/`, {
     method: 'POST',
     body: JSON.stringify({ destination, amount }),
   });

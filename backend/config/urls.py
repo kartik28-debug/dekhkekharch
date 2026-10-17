@@ -28,7 +28,4 @@ urlpatterns = [
 
     # Smart Budget endpoints
     path("api/smart-budget/", include(smart_budget_urlpatterns)),
-
-    # JWT auth endpoints (token obtain + refresh)
-    path("api/auth/", include("apps.accounts.urls")),
 ]

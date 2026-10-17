@@ -8,6 +8,8 @@
  *   DELETE /api/goals/<id>/  → delete a goal
  */
 
+import { apiFetch, apiFetchJson } from './client';
+
 const BASE = '/api/goals';
 
 /**
@@ -15,12 +17,7 @@ const BASE = '/api/goals';
  * Returns an array of Goal objects.
  */
 export async function getGoals() {
-  const res = await fetch(`${BASE}/`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
+  return apiFetchJson(`${BASE}/`);
 }
 
 /**
@@ -30,20 +27,10 @@ export async function getGoals() {
  * @param {{ name: string, target_amount?: number, priority?: number, allocation_mode?: string, manual_amount?: number|null }} payload
  */
 export async function createGoal(payload) {
-  const res = await fetch(`${BASE}/`, {
+  return apiFetchJson(`${BASE}/`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const firstError =
-      typeof data === 'object'
-        ? Object.values(data).flat().join(' ')
-        : `HTTP ${res.status}`;
-    throw new Error(firstError);
-  }
-  return data;
 }
 
 /**
@@ -54,20 +41,10 @@ export async function createGoal(payload) {
  * @param {object} payload
  */
 export async function updateGoal(id, payload) {
-  const res = await fetch(`${BASE}/${id}/`, {
+  return apiFetchJson(`${BASE}/${id}/`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const firstError =
-      typeof data === 'object'
-        ? Object.values(data).flat().join(' ')
-        : `HTTP ${res.status}`;
-    throw new Error(firstError);
-  }
-  return data;
 }
 
 /**
@@ -77,7 +54,7 @@ export async function updateGoal(id, payload) {
  * @param {number} id
  */
 export async function deleteGoal(id) {
-  const res = await fetch(`${BASE}/${id}/`, { method: 'DELETE' });
+  const res = await apiFetch(`${BASE}/${id}/`, { method: 'DELETE' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `HTTP ${res.status}`);

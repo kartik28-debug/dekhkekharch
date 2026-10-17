@@ -1,22 +1,36 @@
 """
 Base Django settings — shared across dev and prod.
 NFR-3: All monetary fields use DecimalField(max_digits=12, decimal_places=2).
-NFR-4: JWT access=15min, refresh=7d with rotation.
 """
 
-from datetime import timedelta
+import os
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths & Environment Validation
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # backend/
+load_dotenv(BASE_DIR / ".env")
+
+# Validate required environment variables at application startup
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("Missing required environment variable: DATABASE_URL")
+
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    raise RuntimeError("Missing required environment variable: JWT_SECRET_KEY")
+
+JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 
 # ---------------------------------------------------------------------------
 # Security
 # ---------------------------------------------------------------------------
-SECRET_KEY = "OVERRIDE_IN_PROD"
-ALLOWED_HOSTS: list[str] = []
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", JWT_SECRET_KEY)
+ALLOWED_HOSTS: list[str] = ["*"]
 
 # ---------------------------------------------------------------------------
 # Application definition
@@ -32,7 +46,6 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = [
     "rest_framework",
-    "rest_framework_simplejwt",
     "corsheaders",
 ]
 
@@ -75,6 +88,34 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # ---------------------------------------------------------------------------
+# Database — Neon PostgreSQL
+# ---------------------------------------------------------------------------
+_db_url = DATABASE_URL
+if _db_url.startswith("postgresql+asyncpg://"):
+    _db_url = _db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+elif _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+
+_parsed_db = urlparse(_db_url)
+_db_params = parse_qs(_parsed_db.query)
+_sslmode = _db_params.get("sslmode", ["require"])[0]
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _parsed_db.path.lstrip("/"),
+        "USER": _parsed_db.username or "",
+        "PASSWORD": _parsed_db.password or "",
+        "HOST": _parsed_db.hostname or "",
+        "PORT": _parsed_db.port or 5432,
+        "OPTIONS": {
+            "sslmode": _sslmode,
+        },
+        "CONN_MAX_AGE": 60,
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Auth — custom user model (FR-7.2: every queryset scoped to request.user)
 # ---------------------------------------------------------------------------
 AUTH_USER_MODEL = "accounts.User"
@@ -87,31 +128,29 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # ---------------------------------------------------------------------------
-# DRF — JWT by default, Decimal-safe JSON renderer
+# DRF — Authenticated via FastAPI JWT tokens
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.FastAPIJWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # NFR-3: use DRF's built-in renderer (handles Decimal correctly)
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
 }
 
 # ---------------------------------------------------------------------------
-# JWT (NFR-4)
+# CORS
 # ---------------------------------------------------------------------------
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": False,
-    "AUTH_HEADER_TYPES": ("Bearer",),
-}
+_allowed_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins.split(",") if o.strip()]
+CORS_ALLOW_CREDENTIALS = True
 
 # ---------------------------------------------------------------------------
 # Internationalisation

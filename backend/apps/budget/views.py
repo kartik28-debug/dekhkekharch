@@ -17,7 +17,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -43,22 +43,6 @@ from .serializers import (
 User = get_user_model()
 
 
-# ---------------------------------------------------------------------------
-# Demo-mode helper — resolves a user without requiring a JWT token
-# ---------------------------------------------------------------------------
-
-def _get_demo_user():
-    """
-    Return the first superuser, or the first user in the DB if no superuser
-    exists yet.  Returns None if the DB has no users at all.
-
-    This is intentional for the hackathon dev phase — swap to request.user
-    once real auth is wired up.
-    """
-    user = User.objects.filter(is_superuser=True).order_by("id").first()
-    if user is None:
-        user = User.objects.order_by("id").first()
-    return user
 
 
 # ---------------------------------------------------------------------------
@@ -148,15 +132,10 @@ class DashboardView(APIView):
       If no allocation exists, all 4 buckets show ₹0 and has_allocation=False.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response(
-                {"detail": "No users found. Please create a superuser first."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        user = request.user
 
         allocation, balances = _get_current_allocation_and_balances(user)
         data = _build_dashboard_data(user, allocation, balances)
@@ -178,15 +157,10 @@ class SalaryView(APIView):
     - Returns the full dashboard payload with applied_to hint.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response(
-                {"detail": "No users found. Please create a superuser first."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        user = request.user
 
         serializer = SalarySubmitSerializer(data=request.data)
         if not serializer.is_valid():
@@ -216,15 +190,10 @@ class SalaryView(APIView):
 class LockAllocationView(APIView):
     """Lock the current month's allocation ('Start Month' action)."""
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response(
-                {"detail": "No users found."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        user = request.user
 
         try:
             lock_allocation(user)
@@ -240,15 +209,10 @@ class LockAllocationView(APIView):
 class UnlockAllocationView(APIView):
     """Unlock the current month's allocation."""
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response(
-                {"detail": "No users found."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        user = request.user
 
         try:
             unlock_allocation(user)
@@ -279,7 +243,7 @@ class SavingsAllocationView(APIView):
            Returns the updated { goal_amount, stocks_amount }.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def _get_savings_balance(self, user):
         """Return the live savings BucketBalance for the current month."""
@@ -291,9 +255,7 @@ class SavingsAllocationView(APIView):
         return savings_balance, allocation
 
     def get(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         savings_balance, allocation = self._get_savings_balance(user)
 
@@ -312,9 +274,7 @@ class SavingsAllocationView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         serializer = SavingsAllocationSerializer(data=request.data)
         if not serializer.is_valid():
@@ -354,12 +314,10 @@ class GoalListCreateView(APIView):
            Optional: target_amount, priority, allocation_mode, manual_amount.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         goals = Goal.objects.filter(user=user)
         serializer = GoalSerializer([
@@ -379,9 +337,7 @@ class GoalListCreateView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         serializer = GoalSerializer(data=request.data)
         if not serializer.is_valid():
@@ -421,7 +377,7 @@ class GoalDetailView(APIView):
     DELETE → permanently delete the goal.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def _get_goal(self, user, pk):
         try:
@@ -430,9 +386,7 @@ class GoalDetailView(APIView):
             return None
 
     def put(self, request, pk):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         goal = self._get_goal(user, pk)
         if goal is None:
@@ -462,9 +416,7 @@ class GoalDetailView(APIView):
         return Response(out.data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         goal = self._get_goal(user, pk)
         if goal is None:
@@ -489,15 +441,13 @@ class BufferReserveView(APIView):
       ?page_size=<int>  — items per page (default 20, max 100)
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE     = 100
 
     def get(self, request):
         import math
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, balances = _get_current_allocation_and_balances(user)
         br_bb = balances.get("buffer_reserve")
@@ -572,12 +522,10 @@ class BufferReserveDepositView(APIView):
     Returns the updated buffer_reserve balance.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         serializer = BufferReserveDepositSerializer(data=request.data)
         if not serializer.is_valid():
@@ -656,14 +604,12 @@ class BufferReserveWithdrawView(APIView):
                          destination_bucket='external'.
     """
 
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from django.db import transaction as db_transaction
 
-        user = _get_demo_user()
-        if user is None:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         serializer = BufferReserveWithdrawSerializer(data=request.data)
         if not serializer.is_valid():
@@ -776,12 +722,10 @@ class SmartBudgetExpenseListCreateView(APIView):
     GET: Returns a list of DailyExpenseLog entries for the current month's allocation.
     POST: Logs a new expense and debits the DSL BucketBalance.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, _ = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -792,9 +736,7 @@ class SmartBudgetExpenseListCreateView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, balances = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -856,12 +798,10 @@ class SmartBudgetDSLView(APIView):
     """
     GET: Returns the current DSL BucketBalance (raw balance, allowing negative).
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, balances = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -954,7 +894,7 @@ class SmartBudgetStateView(APIView):
       3. Returns the full payload including week_statuses, entries, and
          catch_up_summaries (so the UI can show retroactive-settle banners).
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from django.utils import timezone
@@ -963,9 +903,7 @@ class SmartBudgetStateView(APIView):
         )
         from apps.budget.models import SmartBudgetState
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, _ = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -999,15 +937,13 @@ class SmartBudgetExpenseV2ListView(APIView):
       3b. If the week is the CURRENT active week: add to state.weekly_expense live.
       4. Save entry and return updated full state.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from django.utils import timezone
         from apps.budget.models import SmartBudgetState, DailyExpenseEntry
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, _ = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -1032,9 +968,7 @@ class SmartBudgetExpenseV2ListView(APIView):
         from apps.budget.models import SmartBudgetState, DailyExpenseEntry
         from apps.budget.serializers import DailyExpenseEntrySerializer as DESerializer
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, _ = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -1106,7 +1040,7 @@ class SmartBudgetExpenseV2DetailView(APIView):
       - If the expense is in the CURRENT active week → update live weekly_expense.
       - If the expense is in a SETTLED week (Edge Case 5) → cascade_from_week.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def _get_entry_and_state(self, pk, user):
         from apps.budget.models import DailyExpenseEntry, SmartBudgetState
@@ -1124,9 +1058,7 @@ class SmartBudgetExpenseV2DetailView(APIView):
         )
         from apps.budget.serializers import DailyExpenseEntrySerializer as DESerializer
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         entry, state = self._get_entry_and_state(pk, user)
         if entry is None:
@@ -1190,9 +1122,7 @@ class SmartBudgetExpenseV2DetailView(APIView):
             catch_up_missed_weeks, find_week_for_date, cascade_from_week,
         )
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         entry, state = self._get_entry_and_state(pk, user)
         if entry is None:
@@ -1232,7 +1162,7 @@ class SmartBudgetEndWeekView(APIView):
     Manually trigger week-end settlement for the current active week.
     Guards against Edge Case 2 (divide by zero after settlement).
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from django.utils import timezone
@@ -1243,9 +1173,7 @@ class SmartBudgetEndWeekView(APIView):
         )
         from apps.budget.models import SmartBudgetState, WeekStatus
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, _ = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -1299,7 +1227,7 @@ class SmartBudgetSettleMonthView(APIView):
     whether to show an allocation modal (surplus) or a deficit warning.
     Does NOT perform the actual fund transfer — that is done by allocate-surplus.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from django.utils import timezone
@@ -1307,9 +1235,7 @@ class SmartBudgetSettleMonthView(APIView):
         from core.services.smart_budget_engine import settle_month
         from apps.budget.models import SmartBudgetState
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         allocation, balances = _get_current_allocation_and_balances(user)
         if not allocation:
@@ -1371,7 +1297,7 @@ class SmartBudgetAllocateSurplusView(APIView):
 
     Payload: { "destination": "savings" | "buffer_reserve", "amount": <decimal> }
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from django.utils import timezone
@@ -1379,9 +1305,7 @@ class SmartBudgetAllocateSurplusView(APIView):
         from apps.budget.models import SmartBudgetState
         from apps.budget.serializers import AllocateSurplusSerializer
 
-        user = _get_demo_user()
-        if not user:
-            return Response({"detail": "No users found."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        user = request.user
 
         ser = AllocateSurplusSerializer(data=request.data)
         if not ser.is_valid():
